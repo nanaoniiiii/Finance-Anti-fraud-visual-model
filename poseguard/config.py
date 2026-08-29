@@ -48,6 +48,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "wrist_ear_ratio": 0.13,
         "nearby_body_ratio": 0.8,
         "lingering_max_speed_ratio": 0.12,
+        "lingering_max_pose_motion_ratio": 0.04,
     },
     "output": {"directory": "runs", "event_filename": "events.jsonl"},
 }
@@ -183,9 +184,13 @@ def validate_config(config: Mapping[str, Any]) -> list[str]:
         value = risk.get(name)
         if not isinstance(value, (int, float)) or value <= 0:
             errors.append(f"risk.{name} must be positive")
-    speed_ratio = risk.get("lingering_max_speed_ratio")
-    if not isinstance(speed_ratio, (int, float)) or speed_ratio < 0:
-        errors.append("risk.lingering_max_speed_ratio must be non-negative")
+    for name in (
+        "lingering_max_speed_ratio",
+        "lingering_max_pose_motion_ratio",
+    ):
+        value = risk.get(name)
+        if not finite_real(value) or value < 0:
+            errors.append(f"risk.{name} must be a finite non-negative number")
 
     for name in ("width", "height", "fps", "buffer_size"):
         value = camera.get(name)

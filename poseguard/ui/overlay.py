@@ -59,6 +59,14 @@ def summarize_track_decisions(
     )
 
 
+def split_track_label(label: str) -> tuple[str, ...]:
+    """Keep a risk label readable without growing into a stacked paragraph."""
+    parts = tuple(part for part in label.split(" | ") if part)
+    if len(parts) <= 2:
+        return parts or (label,)
+    return " | ".join(parts[:2]), " | ".join(parts[2:])
+
+
 class UnicodeTextPainter:
     def __init__(self) -> None:
         self._font_path = next(
@@ -125,14 +133,17 @@ class OverlayRenderer:
             cv2.rectangle(canvas, (x1, y1), (x2, y2), color, thickness)
             self._draw_skeleton(canvas, track, color)
 
-            text_items.append(
-                (
-                    label,
-                    (max(x1, 0), max(y1 - 25, 2)),
-                    color,
-                    17,
+            label_lines = split_track_label(label)
+            label_y = max(y1 - 22 * len(label_lines), 2)
+            for index, line in enumerate(label_lines):
+                text_items.append(
+                    (
+                        line,
+                        (max(x1, 0), label_y + index * 20),
+                        color,
+                        17,
+                    )
                 )
-            )
 
         fps = metrics.get("fps", 0.0)
         inference_ms = metrics.get("inference_ms", 0.0)

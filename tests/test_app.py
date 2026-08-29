@@ -120,4 +120,42 @@ def test_recent_event_summary_keeps_latest_three_alerts():
 
     summaries = update_recent_events((), events, limit=3)
 
-    assert summaries == ("ID 2: risk-2", "ID 3: risk-3", "ID 4: risk-4")
+    assert tuple(text for _, text in summaries) == (
+        "ID 2: risk-2",
+        "ID 3: risk-3",
+        "ID 4: risk-4",
+    )
+
+
+def test_recent_events_deduplicate_by_target_and_risk_kind():
+    first = RiskDecision(
+        track_id=7,
+        kind=RiskKind.LINGERING,
+        state=RiskState.ALERT,
+        reason="疑似长时间停留",
+        confidence=0.9,
+        bbox=(0.0, 0.0, 10.0, 20.0),
+    )
+    refreshed = RiskDecision(
+        track_id=7,
+        kind=RiskKind.LINGERING,
+        state=RiskState.ALERT,
+        reason="疑似长时间停留（更新）",
+        confidence=0.9,
+        bbox=(0.0, 0.0, 10.0, 20.0),
+    )
+    other_kind = RiskDecision(
+        track_id=7,
+        kind=RiskKind.PHONE,
+        state=RiskState.ALERT,
+        reason="疑似贴耳通话",
+        confidence=0.9,
+        bbox=(0.0, 0.0, 10.0, 20.0),
+    )
+
+    summaries = update_recent_events((), (first,))
+    summaries = update_recent_events(summaries, (refreshed, other_kind))
+
+    assert len(summaries) == 2
+    assert ((7, RiskKind.LINGERING.value), "ID 7: 疑似长时间停留（更新）") in summaries
+    assert ((7, RiskKind.PHONE.value), "ID 7: 疑似贴耳通话") in summaries

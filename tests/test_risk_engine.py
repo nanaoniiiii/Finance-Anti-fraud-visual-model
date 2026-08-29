@@ -37,6 +37,7 @@ def _track(track_id=1, center=(320.0, 240.0), timestamp=0.0, phone_pose=False):
         body_height=200.0,
         first_seen=0.0,
         last_seen=timestamp,
+        pose_motion_valid=True,
     )
 
 
@@ -50,6 +51,7 @@ def _engine():
         wrist_ear_ratio=0.13,
         nearby_body_ratio=0.8,
         lingering_max_speed_ratio=0.12,
+        lingering_max_pose_motion_ratio=0.04,
     )
 
 
@@ -109,6 +111,43 @@ def test_single_person_lingering_turns_red_after_twenty_seconds():
     result = _decision(decisions, RiskKind.LINGERING)
     assert result.state is RiskState.ALERT
     assert result.duration_seconds >= 20.0
+
+
+def test_visible_pose_motion_restarts_lingering_qualification_window():
+    engine = _engine()
+    track = replace(_track(), pose_motion_valid=True)
+
+    engine.evaluate((track,), (), FRAME_SIZE, 0.0)
+    moving = replace(track, last_seen=19.0, pose_motion=0.08)
+    assert not any(
+        item.kind is RiskKind.LINGERING and item.state is RiskState.ALERT
+        for item in engine.evaluate((moving,), (), FRAME_SIZE, 19.0)
+    )
+
+    still_soon_after = replace(track, last_seen=20.1, pose_motion=0.0)
+    decisions = engine.evaluate((still_soon_after,), (), FRAME_SIZE, 20.1)
+
+    assert not any(
+        item.kind is RiskKind.LINGERING and item.state is RiskState.ALERT
+        for item in decisions
+    )
+
+
+def test_unknown_pose_motion_restarts_lingering_qualification_window():
+    engine = _engine()
+    track = replace(_track(), pose_motion_valid=True)
+
+    engine.evaluate((track,), (), FRAME_SIZE, 0.0)
+    unknown_motion = replace(track, last_seen=19.0, pose_motion_valid=False)
+    engine.evaluate((unknown_motion,), (), FRAME_SIZE, 19.0)
+    still_soon_after = replace(track, last_seen=20.1, pose_motion=0.0)
+
+    decisions = engine.evaluate((still_soon_after,), (), FRAME_SIZE, 20.1)
+
+    assert not any(
+        item.kind is RiskKind.LINGERING and item.state is RiskState.ALERT
+        for item in decisions
+    )
 
 
 def test_short_linger_and_distant_background_person_stay_normal():

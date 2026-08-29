@@ -68,16 +68,17 @@ def update_alert_transitions(
 
 
 def update_recent_events(
-    previous: tuple[str, ...],
+    previous: tuple[tuple[tuple[int, str], str], ...],
     new_events,
     *,
     limit: int = 3,
-) -> tuple[str, ...]:
-    added = tuple(
-        f"ID {decision.track_id}: {decision.reason}"
-        for decision in new_events
-    )
-    return (previous + added)[-limit:]
+) -> tuple[tuple[tuple[int, str], str], ...]:
+    recent = list(previous)
+    for decision in new_events:
+        key = (decision.track_id, decision.kind.value)
+        recent = [item for item in recent if item[0] != key]
+        recent.append((key, f"ID {decision.track_id}: {decision.reason}"))
+    return tuple(recent[-limit:])
 
 
 def parse_source(value: str):
@@ -237,7 +238,7 @@ def run(args: argparse.Namespace) -> int:
                     tracks,
                     decisions,
                     {"fps": fps, "inference_ms": inference_ms},
-                    recent_events=recent_events,
+                    recent_events=tuple(text for _, text in recent_events),
                 )
                 cv2.imshow("PoseGuard - Suspicious Behavior Assistance", canvas)
                 key = cv2.waitKey(1) & 0xFF

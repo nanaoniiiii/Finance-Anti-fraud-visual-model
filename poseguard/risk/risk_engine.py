@@ -32,6 +32,7 @@ class RiskRuleEngine:
         wrist_ear_ratio: float,
         nearby_body_ratio: float,
         lingering_max_speed_ratio: float,
+        lingering_max_pose_motion_ratio: float,
     ) -> None:
         self.region = tuple(region)
         self.lingering_seconds = lingering_seconds
@@ -41,6 +42,7 @@ class RiskRuleEngine:
         self.wrist_ear_ratio = wrist_ear_ratio
         self.nearby_body_ratio = nearby_body_ratio
         self.lingering_max_speed_ratio = lingering_max_speed_ratio
+        self.lingering_max_pose_motion_ratio = lingering_max_pose_motion_ratio
 
         self._phone_candidate_since: dict[int, float] = {}
         self._phone_confirm_since: dict[int, float] = {}
@@ -159,6 +161,14 @@ class RiskRuleEngine:
         if not is_inside:
             self._inside_since.pop(track.track_id, None)
             self._inside_path_start.pop(track.track_id, None)
+            return self._retained_alert(track, key, timestamp, "疑似长时间停留")
+
+        if (
+            not track.pose_motion_valid
+            or track.pose_motion > self.lingering_max_pose_motion_ratio
+        ):
+            self._inside_since[track.track_id] = timestamp
+            self._inside_path_start[track.track_id] = track.path_length
             return self._retained_alert(track, key, timestamp, "疑似长时间停留")
 
         since = self._inside_since.setdefault(track.track_id, timestamp)

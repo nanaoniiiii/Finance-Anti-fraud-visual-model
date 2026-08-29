@@ -6,6 +6,7 @@ from poseguard.ui.overlay import (
     OverlayRenderer,
     UnicodeTextPainter,
     is_exit_key,
+    split_track_label,
     summarize_track_decisions,
 )
 
@@ -85,6 +86,19 @@ def test_track_summary_combines_all_risk_reasons():
     assert "疑似长时间停留" in label
     assert "21.0s" in label
     assert strongest.state is RiskState.ALERT
+
+
+def test_long_risk_label_is_split_into_at_most_two_drawable_lines():
+    label = (
+        "ID 1 | 疑似风险行为 | 疑似贴耳通话 + 疑似长时间停留 + "
+        "疑似多人进入监控区 | 21.0s"
+    )
+
+    lines = split_track_label(label)
+
+    assert len(lines) == 2
+    assert "ID 1" in lines[0]
+    assert "21.0s" in lines[-1]
 
 
 def test_renderer_accepts_recent_event_summary():
