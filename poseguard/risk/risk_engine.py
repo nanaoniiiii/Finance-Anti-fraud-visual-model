@@ -56,9 +56,10 @@ class RiskRuleEngine:
         frame_size: tuple[int, int],
         timestamp: float,
     ) -> tuple[RiskDecision, ...]:
-        visible_tracks = tuple(track for track in tracks if not track.predicted)
+        all_tracks = tuple(tracks)
+        visible_tracks = tuple(track for track in all_tracks if not track.predicted)
         phone_items = tuple(phones)
-        live_ids = {track.track_id for track in visible_tracks}
+        live_ids = {track.track_id for track in all_tracks}
         self._forget_missing(live_ids)
 
         decisions: list[RiskDecision] = []

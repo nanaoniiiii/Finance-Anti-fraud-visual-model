@@ -142,3 +142,16 @@ def test_alert_releases_only_after_release_window():
         item.kind is RiskKind.PHONE and item.state is RiskState.ALERT
         for item in released
     )
+
+
+def test_short_predicted_gap_preserves_lingering_timer():
+    engine = _engine()
+    track = _track()
+    engine.evaluate((track,), (), FRAME_SIZE, 0.0)
+
+    predicted = replace(track, predicted=True, missing_frames=1)
+    engine.evaluate((predicted,), (), FRAME_SIZE, 5.0)
+    recovered = replace(track, last_seen=20.1)
+    decisions = engine.evaluate((recovered,), (), FRAME_SIZE, 20.1)
+
+    assert _decision(decisions, RiskKind.LINGERING).state is RiskState.ALERT
