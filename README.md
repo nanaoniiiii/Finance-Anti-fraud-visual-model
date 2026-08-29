@@ -10,6 +10,20 @@ python -m pip install -r requirements.txt
 python -m poseguard.app --source 0 --config configs/windows.json
 ```
 
+检查摄像头和运行环境：
+
+```powershell
+python scripts/check_windows.py --source 0
+```
+
+无窗口定量测试（处理 120 帧后自动退出）：
+
+```powershell
+python -m poseguard.app --source 0 --config configs/windows.json --no-display --max-frames 120
+```
+
+如果检查结果显示 `CUDA available: False`，当前 PyTorch 是 CPU 构建，程序仍可运行，但实时帧率会明显低于 NVIDIA CUDA 构建；后续可在确认驱动与 CUDA 版本后单独替换 PyTorch。
+
 视频文件测试：
 
 ```powershell

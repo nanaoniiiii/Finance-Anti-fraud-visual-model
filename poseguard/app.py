@@ -62,6 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disable-phone", action="store_true")
     parser.add_argument("--no-display", action="store_true")
     parser.add_argument("--output-dir", default=None)
+    parser.add_argument("--max-frames", type=int, default=None)
     return parser
 
 
@@ -100,6 +101,7 @@ def run(args: argparse.Namespace) -> int:
     previous_frame_time = time.perf_counter()
     fps = 0.0
     paused = False
+    processed_frames = 0
 
     try:
         capture = open_capture(source, config["camera"])
@@ -144,6 +146,7 @@ def run(args: argparse.Namespace) -> int:
                 (frame.shape[1], frame.shape[0]),
                 timestamp,
             )
+            processed_frames += 1
             active_alerts = {
                 (decision.track_id, decision.kind.value)
                 for decision in decisions
@@ -174,6 +177,8 @@ def run(args: argparse.Namespace) -> int:
                     break
                 if key in (ord("p"), ord("P")):
                     paused = True
+            if args.max_frames is not None and processed_frames >= args.max_frames:
+                break
         return 0
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
