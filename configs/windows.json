@@ -1,0 +1,44 @@
+{
+  "source": 0,
+  "display": {
+    "enabled": true,
+    "max_width": 960
+  },
+  "camera": {
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "buffer_size": 1
+  },
+  "models": {
+    "pose_path": "models/yolo11n-pose.pt",
+    "phone_path": "models/yolo11n.pt",
+    "pose_confidence": 0.35,
+    "phone_confidence": 0.3,
+    "phone_class": 67
+  },
+  "features": {
+    "phone_detection": true,
+    "event_logging": true
+  },
+  "tracking": {
+    "minimum_confidence": 0.35,
+    "max_missing_frames": 8,
+    "smoothing_alpha": 0.55,
+    "maximum_match_cost": 1.15
+  },
+  "risk": {
+    "region": [0.05, 0.05, 0.95, 0.95],
+    "lingering_seconds": 20.0,
+    "multi_person_seconds": 1.5,
+    "phone_confirm_seconds": 1.0,
+    "alert_release_seconds": 0.8,
+    "wrist_ear_ratio": 0.13,
+    "nearby_body_ratio": 0.8,
+    "lingering_max_speed_ratio": 0.12
+  },
+  "output": {
+    "directory": "runs",
+    "event_filename": "events.jsonl"
+  }
+}
