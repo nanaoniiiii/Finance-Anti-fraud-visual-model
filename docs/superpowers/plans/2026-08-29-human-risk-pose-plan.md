@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a Windows-first, real-time multi-person pose tracking prototype that highlights confirmed suspicious behavior in red and keeps model-specific code replaceable for RK3566, MaixCAM Pro, and ESP32-S3 integration.
+**Goal:** Build a Windows-first, real-time multi-person pose tracking prototype that highlights confirmed suspicious behavior in red and can later become three independent edge-processing editions for RK3566, MaixCAM Pro, and XIAO ESP32-S3 Sense.
 
-**Architecture:** A capture loop feeds a YOLO11n-pose adapter, which emits a backend-neutral person record. An original track manager assigns stable IDs and smooths short-term motion. A separate risk engine applies geometry, proximity, and temporal hysteresis rules; the renderer and JSONL event logger consume only risk results. Phone detection is an optional, conditional backend invoked for hand-near-ear candidates.
+**Architecture:** A capture loop feeds a pose adapter, which emits a backend-neutral person record. An original track manager assigns stable IDs and smooths short-term motion. A separate risk engine applies geometry, proximity, and temporal hysteresis rules; the renderer and event logger consume only risk results. Phone detection is an optional, conditional backend invoked for hand-near-ear candidates. Each future hardware edition owns its camera, local inference, tracking, risk evaluation, and alert output; only camera drivers, model architecture, inference runtime, and resource budgets differ by platform.
 
 **Tech Stack:** Python 3.11, OpenCV, Ultralytics YOLO11n-pose/YOLO11n during Windows prototyping, NumPy, pytest, JSON configuration, JSONL event logging.
 
@@ -396,14 +396,21 @@ git -c user.name='Codex' -c user.email='codex@local' commit -m "test: add Window
 **Files:**
 - Create: `docs/embedded-portability.md`
 - Modify: `README.md`
+- Modify: `docs/superpowers/specs/2026-08-29-human-risk-pose-design.md`
 
 - [ ] **Step 1: Document the backend portability contract**
 
 Specify that embedded adapters only implement `PoseBackend.infer()` and optional `PhoneBackend.find()`, while `types.py`, geometry, track manager, risk engine, event schema, and rule tests remain shared. Document the expected RKNN tensor-to-keypoint conversion and that the app must accept a frame without relying on a desktop display.
 
-- [ ] **Step 2: Document platform-specific deployment tiers**
+- [ ] **Step 2: Document three standalone edge-processing editions**
 
-Record the first target as RK3566 with a quantized lightweight pose model and conditional phone inference; MaixCAM Pro as a separate adapter; ESP32-S3 Sense as capture/trigger frontend unless a separately validated tiny landmark model is available. Include memory, latency, and thermal measurements as required fields for the next test phase.
+Write the portability document and README so that none of the target platforms depends on another target for inference:
+
+1. **Taishan Pi RK3566 edition:** acquire frames from a USB UVC camera; run an INT8 pose model through RKNN; perform stable-ID tracking, optional conditional phone detection, risk state evaluation, and local/network alert output on the RK3566.
+2. **MaixCAM Pro edition:** acquire frames from the built-in camera; run a MaixPy/MaixCDK-compatible lightweight pose model; perform tracking, risk evaluation, and local/network alert output on the MaixCAM Pro. Treat YOLO11 pose conversion as unverified until operator support and decoded keypoints pass an on-device comparison.
+3. **XIAO ESP32-S3 Sense edition:** acquire frames from the built-in OV3660; run a separately trained, pruned, and INT8-quantized TinyML landmark model sized for 8MB PSRAM/8MB Flash; perform reduced-memory tracking, the same three risk semantics, and LED/buzzer/network alerts on the ESP32-S3 itself. Do not describe it as a camera frontend, offload node, or receiver of another board's inference result.
+
+State that the three editions share event semantics and synthetic behavior vectors rather than one mandatory model binary. Include capture FPS, preprocessing time, inference time, postprocessing time, peak memory, model size, temperature or power, alert latency, ID recovery, and long-run stability as required measurements.
 
 - [ ] **Step 3: Run the full verification suite and inspect repository state**
 
@@ -435,4 +442,7 @@ git -c user.name='Codex' -c user.email='codex@local' commit -m "docs: define emb
 - [ ] Short detector gaps preserve IDs and do not reset the lingering timer.
 - [ ] Event JSONL contains no raw frame or image bytes.
 - [ ] README and LICENSES.md explain third-party dependencies and commercial-license review.
+- [ ] RK3566, MaixCAM Pro, and XIAO ESP32-S3 Sense are each documented as a standalone capture-to-alert endpoint.
+- [ ] RK3566 uses a USB camera; MaixCAM Pro and XIAO ESP32-S3 Sense use their built-in cameras.
+- [ ] No document describes XIAO ESP32-S3 Sense as an inference-offload frontend or as dependent on another board.
 - [ ] The result is described as suspicious-behavior assistance, not identity or criminal classification.
