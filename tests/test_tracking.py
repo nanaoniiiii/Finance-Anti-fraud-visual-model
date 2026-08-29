@@ -206,6 +206,26 @@ def test_brief_missing_detection_retains_track_then_expires():
     assert expired == ()
 
 
+def test_confirmed_track_survives_quality_gap_by_elapsed_time_not_frame_count():
+    manager = PersonTrackManager(
+        max_missing_frames=8,
+        max_missing_seconds=1.0,
+    )
+    original = manager.update((_observation(10, 20),), 0.0, (640, 480))[0]
+
+    # At 20 FPS, a 0.55 second quality gap exceeds eight frames but should
+    # not replace the same person with a new ID.
+    for frame in range(1, 12):
+        predicted = manager.update((), frame * 0.05, (640, 480))
+        assert predicted[0].track_id == original.track_id
+        assert predicted[0].predicted is True
+
+    recovered = manager.update((_observation(14, 20),), 0.6, (640, 480))[0]
+
+    assert recovered.track_id == original.track_id
+    assert recovered.predicted is False
+
+
 def test_path_length_accumulates_smoothed_motion():
     manager = PersonTrackManager(smoothing_alpha=1.0)
     first = manager.update((_observation(0, 0),), 0.0, (640, 480))[0]

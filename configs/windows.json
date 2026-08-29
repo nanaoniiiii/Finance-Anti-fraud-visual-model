@@ -34,6 +34,7 @@
   "tracking": {
     "minimum_confidence": 0.35,
     "max_missing_frames": 8,
+    "max_missing_seconds": 1.5,
     "smoothing_alpha": 0.55,
     "maximum_match_cost": 1.15,
     "min_confirmed_hits": 3

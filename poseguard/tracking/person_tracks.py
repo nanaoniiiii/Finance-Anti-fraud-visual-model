@@ -26,12 +26,21 @@ class PersonTrackManager:
         self,
         minimum_confidence: float = 0.35,
         max_missing_frames: int = 8,
+        max_missing_seconds: float | None = None,
         smoothing_alpha: float = 0.55,
         maximum_match_cost: float = 1.15,
         min_confirmed_hits: int = 1,
     ) -> None:
         self.minimum_confidence = minimum_confidence
         self.max_missing_frames = max_missing_frames
+        if max_missing_seconds is not None and (
+            isinstance(max_missing_seconds, bool)
+            or not isinstance(max_missing_seconds, (int, float))
+            or not math.isfinite(max_missing_seconds)
+            or max_missing_seconds < 0
+        ):
+            raise ValueError("max_missing_seconds must be a finite non-negative number")
+        self.max_missing_seconds = max_missing_seconds
         self.smoothing_alpha = smoothing_alpha
         self.maximum_match_cost = maximum_match_cost
         if type(min_confirmed_hits) is not int or min_confirmed_hits < 1:
@@ -79,7 +88,7 @@ class PersonTrackManager:
                     candidates[assignments[track_id]],
                     timestamp,
                 )
-            elif track.missing_frames + 1 <= self.max_missing_frames:
+            elif self._within_missing_grace(track, timestamp):
                 updated[track_id] = replace(
                     track,
                     missing_frames=track.missing_frames + 1,
@@ -101,6 +110,15 @@ class PersonTrackManager:
             for key in sorted(updated)
             if updated[key].confirmed
         )
+
+    def _within_missing_grace(
+        self,
+        track: PersonTrack,
+        timestamp: float,
+    ) -> bool:
+        if self.max_missing_seconds is not None:
+            return timestamp - track.last_seen <= self.max_missing_seconds
+        return track.missing_frames + 1 <= self.max_missing_frames
 
     def _new_track(self, observation: PersonObservation, timestamp: float) -> PersonTrack:
         center = _center(observation.bbox)

@@ -35,6 +35,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "tracking": {
         "minimum_confidence": 0.35,
         "max_missing_frames": 8,
+        "max_missing_seconds": 1.5,
         "smoothing_alpha": 0.55,
         "maximum_match_cost": 1.15,
         "min_confirmed_hits": 3,
@@ -173,6 +174,9 @@ def validate_config(config: Mapping[str, Any]) -> list[str]:
     missing_frames = tracking.get("max_missing_frames")
     if not isinstance(missing_frames, int) or missing_frames < 0:
         errors.append("tracking.max_missing_frames must be a non-negative integer")
+    missing_seconds = tracking.get("max_missing_seconds")
+    if not finite_real(missing_seconds) or missing_seconds < 0:
+        errors.append("tracking.max_missing_seconds must be a finite non-negative number")
     maximum_cost = tracking.get("maximum_match_cost")
     if not isinstance(maximum_cost, (int, float)) or maximum_cost <= 0:
         errors.append("tracking.maximum_match_cost must be positive")
