@@ -1,0 +1,144 @@
+from dataclasses import replace
+
+from poseguard.risk.risk_engine import RiskRuleEngine
+from poseguard.types import (
+    Keypoint,
+    PersonTrack,
+    PhoneObservation,
+    RiskKind,
+    RiskState,
+)
+
+
+FRAME_SIZE = (640, 480)
+
+
+def _track(track_id=1, center=(320.0, 240.0), timestamp=0.0, phone_pose=False):
+    x, y = center
+    bbox = (x - 50, y - 100, x + 50, y + 100)
+    points = [None] * 17
+    if phone_pose:
+        points[3] = Keypoint(x - 12, y - 70, 0.95)
+        points[5] = Keypoint(x - 10, y - 35, 0.95)
+        points[7] = Keypoint(x - 20, y - 48, 0.95)
+        points[9] = Keypoint(x - 11, y - 66, 0.95)
+    points[11] = Keypoint(x - 8, y + 15, 0.95)
+    points[12] = Keypoint(x + 8, y + 15, 0.95)
+    points[15] = Keypoint(x - 8, y + 90, 0.95)
+    points[16] = Keypoint(x + 8, y + 90, 0.95)
+    if points[5] is None:
+        points[5] = Keypoint(x - 10, y - 35, 0.95)
+    return PersonTrack(
+        track_id=track_id,
+        bbox=bbox,
+        confidence=0.9,
+        keypoints=tuple(points),
+        center=center,
+        body_height=200.0,
+        first_seen=0.0,
+        last_seen=timestamp,
+    )
+
+
+def _engine():
+    return RiskRuleEngine(
+        region=(0.05, 0.05, 0.95, 0.95),
+        lingering_seconds=20.0,
+        multi_person_seconds=1.5,
+        phone_confirm_seconds=1.0,
+        alert_release_seconds=0.8,
+        wrist_ear_ratio=0.13,
+        nearby_body_ratio=0.8,
+        lingering_max_speed_ratio=0.12,
+    )
+
+
+def _decision(decisions, kind, track_id=1):
+    return next(item for item in decisions if item.kind is kind and item.track_id == track_id)
+
+
+def test_phone_candidate_stays_orange_without_phone():
+    engine = _engine()
+    track = _track(phone_pose=True)
+
+    first = engine.evaluate((track,), (), FRAME_SIZE, 0.0)
+    later = engine.evaluate((replace(track, last_seen=3.0),), (), FRAME_SIZE, 3.0)
+
+    assert _decision(first, RiskKind.PHONE).state is RiskState.CANDIDATE
+    assert _decision(later, RiskKind.PHONE).state is RiskState.CANDIDATE
+    assert _decision(later, RiskKind.PHONE).color == (0, 165, 255)
+
+
+def test_phone_match_turns_red_after_one_second():
+    engine = _engine()
+    track = _track(phone_pose=True)
+    phone = PhoneObservation((295, 165, 315, 195), 0.85)
+
+    engine.evaluate((track,), (phone,), FRAME_SIZE, 0.0)
+    decisions = engine.evaluate((replace(track, last_seen=1.1),), (phone,), FRAME_SIZE, 1.1)
+
+    result = _decision(decisions, RiskKind.PHONE)
+    assert result.state is RiskState.ALERT
+    assert result.color == (0, 0, 255)
+    assert "贴耳通话" in result.reason
+
+
+def test_two_people_inside_region_turn_red_after_one_point_five_seconds():
+    engine = _engine()
+    tracks = (_track(1, (280, 240)), _track(2, (380, 240)))
+
+    engine.evaluate(tracks, (), FRAME_SIZE, 0.0)
+    decisions = engine.evaluate(
+        tuple(replace(track, last_seen=1.6) for track in tracks),
+        (),
+        FRAME_SIZE,
+        1.6,
+    )
+
+    assert _decision(decisions, RiskKind.MULTI_PERSON, 1).state is RiskState.ALERT
+    assert _decision(decisions, RiskKind.MULTI_PERSON, 2).state is RiskState.ALERT
+
+
+def test_single_person_lingering_turns_red_after_twenty_seconds():
+    engine = _engine()
+    track = _track()
+
+    engine.evaluate((track,), (), FRAME_SIZE, 0.0)
+    decisions = engine.evaluate((replace(track, last_seen=20.1),), (), FRAME_SIZE, 20.1)
+
+    result = _decision(decisions, RiskKind.LINGERING)
+    assert result.state is RiskState.ALERT
+    assert result.duration_seconds >= 20.0
+
+
+def test_short_linger_and_distant_background_person_stay_normal():
+    engine = _engine()
+    inside = _track(1, (320, 240))
+    outside = _track(2, (10, 10))
+
+    engine.evaluate((inside, outside), (), FRAME_SIZE, 0.0)
+    decisions = engine.evaluate(
+        (replace(inside, last_seen=5.0), replace(outside, last_seen=5.0)),
+        (),
+        FRAME_SIZE,
+        5.0,
+    )
+
+    assert not any(item.state is RiskState.ALERT for item in decisions)
+
+
+def test_alert_releases_only_after_release_window():
+    engine = _engine()
+    track = _track(phone_pose=True)
+    phone = PhoneObservation((295, 165, 315, 195), 0.85)
+    engine.evaluate((track,), (phone,), FRAME_SIZE, 0.0)
+    engine.evaluate((replace(track, last_seen=1.1),), (phone,), FRAME_SIZE, 1.1)
+
+    retained = engine.evaluate((replace(track, last_seen=1.4),), (), FRAME_SIZE, 1.4)
+    released = engine.evaluate((replace(track, last_seen=2.3),), (), FRAME_SIZE, 2.3)
+
+    assert _decision(retained, RiskKind.PHONE).state is RiskState.ALERT
+    assert not any(
+        item.kind is RiskKind.PHONE and item.state is RiskState.ALERT
+        for item in released
+    )
