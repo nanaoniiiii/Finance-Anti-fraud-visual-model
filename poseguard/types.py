@@ -47,6 +47,10 @@ class PersonTrack:
     last_seen: float
     missing_frames: int = 0
     predicted: bool = False
+    hits: int = 1
+    confirmed: bool = True
+    pose_motion: float = 0.0
+    pose_motion_valid: bool = False
     inside_since: Optional[float] = None
     path_length: float = 0.0
 

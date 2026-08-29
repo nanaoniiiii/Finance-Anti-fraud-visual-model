@@ -37,6 +37,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_missing_frames": 8,
         "smoothing_alpha": 0.55,
         "maximum_match_cost": 1.15,
+        "min_confirmed_hits": 3,
     },
     "risk": {
         "region": [0.05, 0.05, 0.95, 0.95],
@@ -174,6 +175,9 @@ def validate_config(config: Mapping[str, Any]) -> list[str]:
     maximum_cost = tracking.get("maximum_match_cost")
     if not isinstance(maximum_cost, (int, float)) or maximum_cost <= 0:
         errors.append("tracking.maximum_match_cost must be positive")
+    min_confirmed_hits = tracking.get("min_confirmed_hits")
+    if type(min_confirmed_hits) is not int or min_confirmed_hits < 1:
+        errors.append("tracking.min_confirmed_hits must be a positive integer")
 
     for name in ("wrist_ear_ratio", "nearby_body_ratio"):
         value = risk.get(name)

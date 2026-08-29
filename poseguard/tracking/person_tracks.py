@@ -28,11 +28,15 @@ class PersonTrackManager:
         max_missing_frames: int = 8,
         smoothing_alpha: float = 0.55,
         maximum_match_cost: float = 1.15,
+        min_confirmed_hits: int = 1,
     ) -> None:
         self.minimum_confidence = minimum_confidence
         self.max_missing_frames = max_missing_frames
         self.smoothing_alpha = smoothing_alpha
         self.maximum_match_cost = maximum_match_cost
+        if type(min_confirmed_hits) is not int or min_confirmed_hits < 1:
+            raise ValueError("min_confirmed_hits must be a positive integer")
+        self.min_confirmed_hits = min_confirmed_hits
         self._tracks: dict[int, PersonTrack] = {}
         self._next_id = 1
 
@@ -80,6 +84,9 @@ class PersonTrackManager:
                     track,
                     missing_frames=track.missing_frames + 1,
                     predicted=True,
+                    hits=track.hits if track.confirmed else 0,
+                    pose_motion=0.0,
+                    pose_motion_valid=False,
                 )
 
         for index, observation in enumerate(candidates):
@@ -89,7 +96,11 @@ class PersonTrackManager:
             updated[track.track_id] = track
 
         self._tracks = updated
-        return tuple(updated[key] for key in sorted(updated))
+        return tuple(
+            updated[key]
+            for key in sorted(updated)
+            if updated[key].confirmed
+        )
 
     def _new_track(self, observation: PersonObservation, timestamp: float) -> PersonTrack:
         center = _center(observation.bbox)
@@ -102,6 +113,8 @@ class PersonTrackManager:
             body_height=max(observation.bbox[3] - observation.bbox[1], 1.0),
             first_seen=timestamp,
             last_seen=timestamp,
+            hits=1,
+            confirmed=self.min_confirmed_hits <= 1,
         )
         self._next_id += 1
         return track
@@ -113,6 +126,7 @@ class PersonTrackManager:
         timestamp: float,
     ) -> PersonTrack:
         alpha = self.smoothing_alpha
+        pose_motion, pose_motion_valid = self._pose_motion(track, observation)
         bbox = tuple(
             _blend(old, new, alpha)
             for old, new in zip(track.bbox, observation.bbox)
@@ -134,9 +148,50 @@ class PersonTrackManager:
             last_seen=timestamp,
             missing_frames=0,
             predicted=False,
+            hits=track.hits + 1,
+            confirmed=(
+                track.confirmed or track.hits + 1 >= self.min_confirmed_hits
+            ),
+            pose_motion=pose_motion,
+            pose_motion_valid=pose_motion_valid,
             inside_since=track.inside_since,
             path_length=track.path_length + motion,
         )
+
+    @staticmethod
+    def _pose_motion(
+        track: PersonTrack,
+        observation: PersonObservation,
+    ) -> tuple[float, bool]:
+        distances = [
+            math.dist((old.x, old.y), (new.x, new.y))
+            for old, new in zip(track.keypoints, observation.keypoints)
+            if old is not None and new is not None
+        ]
+        if len(distances) < 4:
+            return 0.0, False
+
+        track_width = max(track.bbox[2] - track.bbox[0], 1.0)
+        observation_width = max(
+            observation.bbox[2] - observation.bbox[0],
+            1.0,
+        )
+        observation_height = max(
+            observation.bbox[3] - observation.bbox[1],
+            1.0,
+        )
+        body_scale = max(
+            track.body_height,
+            track_width,
+            observation_width,
+            observation_height,
+        )
+        normalized = sorted(
+            (distance / body_scale for distance in distances),
+            reverse=True,
+        )
+        top_count = max(1, len(normalized) // 4)
+        return sum(normalized[:top_count]) / top_count, True
 
     @staticmethod
     def _blend_keypoint(

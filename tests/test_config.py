@@ -72,3 +72,15 @@ def test_tracking_and_ratio_ranges_are_validated():
     assert any("smoothing_alpha" in item for item in errors)
     assert any("max_missing_frames" in item for item in errors)
     assert any("wrist_ear_ratio" in item for item in errors)
+
+
+def test_default_config_requires_three_hits_before_publishing_tracks():
+    assert default_config()["tracking"]["min_confirmed_hits"] == 3
+
+
+@pytest.mark.parametrize("value", (0, -1, True, 1.5))
+def test_min_confirmed_hits_requires_positive_non_boolean_integer(value):
+    config = default_config()
+    config["tracking"]["min_confirmed_hits"] = value
+
+    assert any("min_confirmed_hits" in item for item in validate_config(config))
