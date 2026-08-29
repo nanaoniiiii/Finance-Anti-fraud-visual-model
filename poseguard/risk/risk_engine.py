@@ -218,6 +218,16 @@ class RiskRuleEngine:
                 )
                 if state is RiskState.ALERT:
                     self._active_alerts[key] = timestamp
+                else:
+                    retained = self._retained_alert(
+                        track,
+                        key,
+                        timestamp,
+                        reason,
+                    )
+                    if retained is not None:
+                        results.append(retained)
+                        continue
                 results.append(
                     self._decision(
                         track,

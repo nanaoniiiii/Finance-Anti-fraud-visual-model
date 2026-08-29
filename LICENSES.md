@@ -26,7 +26,7 @@ This file records dependencies used by the Windows prototype. It is not legal ad
 - Purpose: render readable Chinese risk labels with an installed Unicode font.
 - Project: https://python-pillow.github.io/
 - Source: https://github.com/python-pillow/Pillow
-- License: HPND, as published by the Pillow project.
+- License: MIT-CMU, as published in the Pillow 12.2.0 project metadata and license file.
 
 ## Project-owned implementation
 

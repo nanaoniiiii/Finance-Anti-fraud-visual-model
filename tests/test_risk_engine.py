@@ -249,3 +249,18 @@ def test_multi_person_proximity_reason_only_applies_to_close_pair():
     assert "过近" in _decision(decisions, RiskKind.MULTI_PERSON, 1).reason
     assert "过近" in _decision(decisions, RiskKind.MULTI_PERSON, 2).reason
     assert "进入监控区" in _decision(decisions, RiskKind.MULTI_PERSON, 3).reason
+
+
+def test_recovered_multi_person_tracks_retain_alert_during_release_window():
+    engine = _engine()
+    first = _track(1, (280, 240))
+    second = _track(2, (380, 240))
+    engine.evaluate((first, second), (), FRAME_SIZE, 0.0)
+    engine.evaluate((first, second), (), FRAME_SIZE, 1.6)
+
+    predicted_second = replace(second, predicted=True, missing_frames=1)
+    engine.evaluate((first, predicted_second), (), FRAME_SIZE, 1.7)
+    recovered = engine.evaluate((first, second), (), FRAME_SIZE, 1.8)
+
+    assert _decision(recovered, RiskKind.MULTI_PERSON, 1).state is RiskState.ALERT
+    assert _decision(recovered, RiskKind.MULTI_PERSON, 2).state is RiskState.ALERT
