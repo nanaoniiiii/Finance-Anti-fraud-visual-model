@@ -216,3 +216,36 @@ def test_removed_track_clears_active_alert_state():
     engine.evaluate((), (), FRAME_SIZE, 2.0)
 
     assert engine._active_alerts == {}
+
+
+def test_predicted_participant_resets_multi_person_qualification_for_both_tracks():
+    engine = _engine()
+    first = _track(1, (280, 240))
+    second = _track(2, (380, 240))
+    engine.evaluate((first, second), (), FRAME_SIZE, 0.0)
+
+    predicted_second = replace(second, predicted=True, missing_frames=1)
+    engine.evaluate((first, predicted_second), (), FRAME_SIZE, 0.5)
+    decisions = engine.evaluate((first, second), (), FRAME_SIZE, 1.1)
+
+    first_result = _decision(decisions, RiskKind.MULTI_PERSON, 1)
+    second_result = _decision(decisions, RiskKind.MULTI_PERSON, 2)
+    assert first_result.state is RiskState.CANDIDATE
+    assert second_result.state is RiskState.CANDIDATE
+    assert first_result.duration_seconds == 0.0
+    assert second_result.duration_seconds == 0.0
+
+
+def test_multi_person_proximity_reason_only_applies_to_close_pair():
+    engine = _engine()
+    tracks = (
+        _track(1, (180, 240)),
+        _track(2, (240, 240)),
+        _track(3, (520, 240)),
+    )
+
+    decisions = engine.evaluate(tracks, (), FRAME_SIZE, 0.0)
+
+    assert "过近" in _decision(decisions, RiskKind.MULTI_PERSON, 1).reason
+    assert "过近" in _decision(decisions, RiskKind.MULTI_PERSON, 2).reason
+    assert "进入监控区" in _decision(decisions, RiskKind.MULTI_PERSON, 3).reason

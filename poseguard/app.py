@@ -32,7 +32,7 @@ class ResilientPhoneBackend:
             return ()
         try:
             return self._backend.find(frame, regions)
-        except RuntimeError as exc:
+        except Exception as exc:
             self.available = False
             print(
                 f"Optional phone detection disabled: {exc}",

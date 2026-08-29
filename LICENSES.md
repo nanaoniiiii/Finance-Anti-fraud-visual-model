@@ -21,6 +21,13 @@ This file records dependencies used by the Windows prototype. It is not legal ad
 - Project: https://numpy.org/
 - License: BSD 3-Clause.
 
+## Pillow
+
+- Purpose: render readable Chinese risk labels with an installed Unicode font.
+- Project: https://python-pillow.github.io/
+- Source: https://github.com/python-pillow/Pillow
+- License: HPND, as published by the Pillow project.
+
 ## Project-owned implementation
 
 The following are original project components: backend-neutral records, lightweight track association, pose geometry, temporal risk state machine, event transition logic, privacy-preserving JSONL schema, runtime configuration, and overlay composition.

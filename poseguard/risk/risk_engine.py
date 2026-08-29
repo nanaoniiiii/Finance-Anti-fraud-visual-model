@@ -188,21 +188,27 @@ class RiskRuleEngine:
             if len(inside_tracks) >= 2
             else set()
         )
-        close = any(
-            nearby_people(
+        if not evidence_ids:
+            self._multi_since.clear()
+        close_ids: set[int] = set()
+        for first, second in combinations(inside_tracks, 2):
+            if nearby_people(
                 first.center,
                 first.body_height,
                 second.center,
                 second.body_height,
                 self.nearby_body_ratio,
-            )
-            for first, second in combinations(inside_tracks, 2)
-        )
-        reason = "疑似多人过近" if close else "疑似多人进入监控区"
+            ):
+                close_ids.update((first.track_id, second.track_id))
         results: list[RiskDecision] = []
         for track in visible_tracks:
             key = (track.track_id, RiskKind.MULTI_PERSON)
             if track.track_id in evidence_ids:
+                reason = (
+                    "疑似多人过近"
+                    if track.track_id in close_ids
+                    else "疑似多人进入监控区"
+                )
                 since = self._multi_since.setdefault(track.track_id, timestamp)
                 duration = timestamp - since
                 state = (

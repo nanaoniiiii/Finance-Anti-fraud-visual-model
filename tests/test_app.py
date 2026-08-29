@@ -19,6 +19,15 @@ class FailingPhoneBackend:
         raise RuntimeError("phone model unavailable")
 
 
+class InvalidPhoneResultBackend:
+    def __init__(self):
+        self.calls = 0
+
+    def find(self, frame, regions):
+        self.calls += 1
+        raise ValueError("malformed phone result")
+
+
 def test_optional_phone_failure_disables_backend_and_keeps_processing(capsys):
     backend = FailingPhoneBackend()
     runner = ResilientPhoneBackend(backend)
@@ -30,6 +39,19 @@ def test_optional_phone_failure_disables_backend_and_keeps_processing(capsys):
     assert backend.calls == 1
     assert runner.available is False
     assert capsys.readouterr().err.count("phone model unavailable") == 1
+
+
+def test_optional_phone_result_error_also_degrades_once(capsys):
+    backend = InvalidPhoneResultBackend()
+    runner = ResilientPhoneBackend(backend)
+    frame = np.zeros((32, 32, 3), dtype=np.uint8)
+
+    assert runner.find(frame, []) == ()
+    assert runner.find(frame, []) == ()
+
+    assert backend.calls == 1
+    assert runner.available is False
+    assert capsys.readouterr().err.count("malformed phone result") == 1
 
 
 def test_open_capture_releases_all_failed_windows_handles(monkeypatch):
