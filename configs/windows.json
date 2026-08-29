@@ -21,6 +21,16 @@
     "phone_detection": true,
     "event_logging": true
   },
+  "quality": {
+    "min_visible_keypoints": 6,
+    "min_torso_keypoints": 3,
+    "min_bbox_area_ratio": 0.015,
+    "max_bbox_area_ratio": 0.75,
+    "max_outside_ratio": 0.20,
+    "duplicate_iou_threshold": 0.45,
+    "duplicate_center_body_ratio": 0.25,
+    "duplicate_keypoint_body_ratio": 0.05
+  },
   "tracking": {
     "minimum_confidence": 0.35,
     "max_missing_frames": 8,

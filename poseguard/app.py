@@ -15,6 +15,7 @@ from poseguard.config import apply_cli_overrides, load_config
 from poseguard.io.event_log import EventLogger
 from poseguard.risk.geometry import candidate_phone_sides
 from poseguard.risk.risk_engine import RiskRuleEngine
+from poseguard.tracking.observation_filter import PoseObservationFilter
 from poseguard.tracking.person_tracks import PersonTrackManager
 from poseguard.types import RiskDecision, RiskState
 from poseguard.ui.overlay import OverlayRenderer, is_exit_key
@@ -151,6 +152,7 @@ def run(args: argparse.Namespace) -> int:
             phone_class=config["models"]["phone_class"],
         )
     )
+    observation_filter = PoseObservationFilter(**config["quality"])
     tracker = PersonTrackManager(**config["tracking"])
     engine = RiskRuleEngine(**config["risk"])
     renderer = OverlayRenderer()
@@ -187,6 +189,10 @@ def run(args: argparse.Namespace) -> int:
 
             inference_start = time.perf_counter()
             observations = pose_backend.infer(frame)
+            observations = observation_filter.filter(
+                observations,
+                (frame.shape[1], frame.shape[0]),
+            )
             tracks = tracker.update(
                 observations,
                 timestamp,

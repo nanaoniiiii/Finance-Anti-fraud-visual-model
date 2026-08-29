@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import copy
 import json
+import math
+from numbers import Real
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -20,6 +22,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "phone_class": 67,
     },
     "features": {"phone_detection": True, "event_logging": True},
+    "quality": {
+        "min_visible_keypoints": 6,
+        "min_torso_keypoints": 3,
+        "min_bbox_area_ratio": 0.015,
+        "max_bbox_area_ratio": 0.75,
+        "max_outside_ratio": 0.20,
+        "duplicate_iou_threshold": 0.45,
+        "duplicate_center_body_ratio": 0.25,
+        "duplicate_keypoint_body_ratio": 0.05,
+    },
     "tracking": {
         "minimum_confidence": 0.35,
         "max_missing_frames": 8,
@@ -56,6 +68,13 @@ def _merge(base: dict[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
 def validate_config(config: Mapping[str, Any]) -> list[str]:
     errors: list[str] = []
 
+    def finite_real(value: Any) -> bool:
+        return (
+            isinstance(value, Real)
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+        )
+
     def section(name: str) -> Mapping[str, Any]:
         value = config.get(name, {})
         if not isinstance(value, Mapping):
@@ -66,6 +85,7 @@ def validate_config(config: Mapping[str, Any]) -> list[str]:
     risk = section("risk")
     models = section("models")
     features = section("features")
+    quality = section("quality")
     tracking = section("tracking")
     camera = section("camera")
     display = section("display")
@@ -85,6 +105,46 @@ def validate_config(config: Mapping[str, Any]) -> list[str]:
         value = models.get(name)
         if not isinstance(value, (int, float)) or not 0 <= value <= 1:
             errors.append(f"models.{name} must be between 0 and 1")
+
+    for name, maximum in (
+        ("min_visible_keypoints", 17),
+        ("min_torso_keypoints", 4),
+    ):
+        value = quality.get(name)
+        if type(value) is not int or not 0 <= value <= maximum:
+            errors.append(f"quality.{name} must be an integer between 0 and {maximum}")
+
+    for name in (
+        "min_bbox_area_ratio",
+        "max_bbox_area_ratio",
+        "max_outside_ratio",
+        "duplicate_iou_threshold",
+    ):
+        value = quality.get(name)
+        if not finite_real(value) or not 0 <= value <= 1:
+            errors.append(f"quality.{name} must be a finite number between 0 and 1")
+
+    for name in (
+        "duplicate_center_body_ratio",
+        "duplicate_keypoint_body_ratio",
+    ):
+        value = quality.get(name)
+        if not finite_real(value) or value < 0:
+            errors.append(f"quality.{name} must be a finite non-negative number")
+
+    minimum_area = quality.get("min_bbox_area_ratio")
+    maximum_area = quality.get("max_bbox_area_ratio")
+    if (
+        finite_real(minimum_area)
+        and finite_real(maximum_area)
+        and 0 <= minimum_area <= 1
+        and 0 <= maximum_area <= 1
+        and minimum_area > maximum_area
+    ):
+        errors.append(
+            "quality.min_bbox_area_ratio must not exceed "
+            "quality.max_bbox_area_ratio"
+        )
 
     region = risk.get("region")
     if (
