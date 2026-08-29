@@ -32,3 +32,19 @@ class PersonObservation:
 class PhoneObservation:
     bbox: BBox
     confidence: float
+
+
+@dataclass(frozen=True, slots=True)
+class PersonTrack:
+    track_id: int
+    bbox: BBox
+    confidence: float
+    keypoints: Tuple[Optional[Keypoint], ...]
+    center: Tuple[float, float]
+    body_height: float
+    first_seen: float
+    last_seen: float
+    missing_frames: int = 0
+    predicted: bool = False
+    inside_since: Optional[float] = None
+    path_length: float = 0.0
