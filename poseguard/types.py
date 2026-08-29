@@ -26,3 +26,9 @@ class PersonObservation:
     def __post_init__(self) -> None:
         if len(self.keypoints) != 17:
             raise ValueError("PersonObservation requires 17 COCO keypoints")
+
+
+@dataclass(frozen=True, slots=True)
+class PhoneObservation:
+    bbox: BBox
+    confidence: float
