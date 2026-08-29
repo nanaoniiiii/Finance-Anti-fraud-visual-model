@@ -51,4 +51,10 @@ Windows 原型默认读取：
 
 ## 嵌入式目标
 
-迁移顺序为泰山派 RK3566、MaixCAM Pro、XIAO ESP32-S3 Sense。RK3566 使用 RKNN 作为主推理目标；MaixCAM Pro 使用 MaixPy/MaixCDK 验证兼容模型；XIAO ESP32-S3 Sense 首先承担采集、TinyML预筛和联网告警。具体边界见 `docs/embedded-portability.md`。
+后期提供三个互不依赖的端侧版本，每个设备都独立完成摄像头采集、人体姿态推理、多人轨迹、风险判断和告警：
+
+- 泰山派 RK3566 使用 USB 摄像头，并以 RKNN INT8 作为板端推理目标；
+- MaixCAM Pro 使用板载摄像头和 MaixPy/MaixCDK 兼容模型；
+- XIAO ESP32-S3 Sense 使用板载 OV3660，并运行单独蒸馏、剪枝和 INT8 量化的 TinyML 姿态模型，不作为其他设备的采集前端。
+
+三端共享风险类型、状态颜色和事件语义，但不强求使用同一个模型文件。具体边界见 `docs/embedded-portability.md`。
