@@ -48,3 +48,7 @@ Windows 原型默认读取：
 ## 许可证提示
 
 本工程不会把第三方代码或模型权重声明为原创。Ultralytics 提供 AGPL-3.0 与企业授权方案；闭源商业发布前必须结合最终模型权重、运行库和分发方式复核许可证。详见 `LICENSES.md`。
+
+## 嵌入式目标
+
+迁移顺序为泰山派 RK3566、MaixCAM Pro、XIAO ESP32-S3 Sense。RK3566 使用 RKNN 作为主推理目标；MaixCAM Pro 使用 MaixPy/MaixCDK 验证兼容模型；XIAO ESP32-S3 Sense 首先承担采集、TinyML预筛和联网告警。具体边界见 `docs/embedded-portability.md`。
