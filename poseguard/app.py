@@ -16,8 +16,67 @@ from poseguard.io.event_log import EventLogger
 from poseguard.risk.geometry import candidate_phone_sides
 from poseguard.risk.risk_engine import RiskRuleEngine
 from poseguard.tracking.person_tracks import PersonTrackManager
-from poseguard.types import RiskState
+from poseguard.types import RiskDecision, RiskState
 from poseguard.ui.overlay import OverlayRenderer, is_exit_key
+
+
+class ResilientPhoneBackend:
+    """Disable an optional phone backend after its first runtime failure."""
+
+    def __init__(self, backend) -> None:
+        self._backend = backend
+        self.available = True
+
+    def find(self, frame, regions):
+        if not self.available:
+            return ()
+        try:
+            return self._backend.find(frame, regions)
+        except RuntimeError as exc:
+            self.available = False
+            print(
+                f"Optional phone detection disabled: {exc}",
+                file=sys.stderr,
+            )
+            return ()
+
+
+def update_alert_transitions(
+    decisions,
+    previous_alerts: set[tuple[int, str]],
+    predicted_track_ids: set[int],
+) -> tuple[tuple[RiskDecision, ...], set[tuple[int, str]]]:
+    alerts = tuple(
+        decision
+        for decision in decisions
+        if decision.state is RiskState.ALERT
+    )
+    active_keys = {
+        (decision.track_id, decision.kind.value)
+        for decision in alerts
+    }
+    new_events = tuple(
+        decision
+        for decision in alerts
+        if (decision.track_id, decision.kind.value) not in previous_alerts
+    )
+    predicted_keys = {
+        key for key in previous_alerts if key[0] in predicted_track_ids
+    }
+    return new_events, active_keys | predicted_keys
+
+
+def update_recent_events(
+    previous: tuple[str, ...],
+    new_events,
+    *,
+    limit: int = 3,
+) -> tuple[str, ...]:
+    added = tuple(
+        f"ID {decision.track_id}: {decision.reason}"
+        for decision in new_events
+    )
+    return (previous + added)[-limit:]
 
 
 def parse_source(value: str):
@@ -33,6 +92,7 @@ def open_capture(source, camera_config):
     else:
         capture = cv2.VideoCapture(source)
     if not capture.isOpened():
+        capture.release()
         raise RuntimeError(f"Cannot open video source: {source}")
     if isinstance(source, int):
         capture.set(cv2.CAP_PROP_BUFFERSIZE, int(camera_config["buffer_size"]))
@@ -83,11 +143,13 @@ def run(args: argparse.Namespace) -> int:
         config["models"]["pose_path"],
         confidence=config["models"]["pose_confidence"],
     )
-    phone_backend = YoloPhoneBackend(
-        config["models"]["phone_path"],
-        enabled=config["features"]["phone_detection"],
-        confidence=config["models"]["phone_confidence"],
-        phone_class=config["models"]["phone_class"],
+    phone_backend = ResilientPhoneBackend(
+        YoloPhoneBackend(
+            config["models"]["phone_path"],
+            enabled=config["features"]["phone_detection"],
+            confidence=config["models"]["phone_confidence"],
+            phone_class=config["models"]["phone_class"],
+        )
     )
     tracker = PersonTrackManager(**config["tracking"])
     engine = RiskRuleEngine(**config["risk"])
@@ -98,6 +160,7 @@ def run(args: argparse.Namespace) -> int:
     logger = EventLogger(event_path) if config["features"]["event_logging"] else None
     capture = None
     previous_alerts: set[tuple[int, str]] = set()
+    recent_events: tuple[str, ...] = ()
     previous_frame_time = time.perf_counter()
     fps = 0.0
     paused = False
@@ -147,17 +210,15 @@ def run(args: argparse.Namespace) -> int:
                 timestamp,
             )
             processed_frames += 1
-            active_alerts = {
-                (decision.track_id, decision.kind.value)
-                for decision in decisions
-                if decision.state is RiskState.ALERT
-            }
+            new_events, previous_alerts = update_alert_transitions(
+                decisions,
+                previous_alerts,
+                {track.track_id for track in tracks if track.predicted},
+            )
             if logger is not None:
-                for decision in decisions:
-                    key = (decision.track_id, decision.kind.value)
-                    if decision.state is RiskState.ALERT and key not in previous_alerts:
-                        logger.write(decision, timestamp=time.time())
-            previous_alerts = active_alerts
+                for decision in new_events:
+                    logger.write(decision, timestamp=time.time())
+            recent_events = update_recent_events(recent_events, new_events)
 
             now = time.perf_counter()
             instantaneous_fps = 1.0 / max(now - previous_frame_time, 1e-6)
@@ -170,6 +231,7 @@ def run(args: argparse.Namespace) -> int:
                     tracks,
                     decisions,
                     {"fps": fps, "inference_ms": inference_ms},
+                    recent_events=recent_events,
                 )
                 cv2.imshow("PoseGuard - Suspicious Behavior Assistance", canvas)
                 key = cv2.waitKey(1) & 0xFF

@@ -53,3 +53,20 @@ def test_path_length_accumulates_smoothed_motion():
 
     assert first.path_length == 0.0
     assert second.path_length == 5.0
+
+
+def test_visible_frame_does_not_reuse_missing_keypoints():
+    manager = PersonTrackManager(smoothing_alpha=0.5)
+    first_observation = _observation(10, 20)
+    manager.update((first_observation,), 0.0, (640, 480))
+    missing_points = PersonObservation(
+        detection_index=0,
+        bbox=first_observation.bbox,
+        confidence=0.9,
+        keypoints=(None,) * 17,
+    )
+
+    updated = manager.update((missing_points,), 0.1, (640, 480))[0]
+
+    assert updated.predicted is False
+    assert updated.keypoints == (None,) * 17

@@ -22,6 +22,8 @@ python scripts/check_windows.py --source 0
 python -m poseguard.app --source 0 --config configs/windows.json --no-display --max-frames 120
 ```
 
+当前 Windows CPU 环境的实测过程、结果与尚未验证的边界见 `docs/windows-validation.md`。
+
 如果检查结果显示 `CUDA available: False`，当前 PyTorch 是 CPU 构建，程序仍可运行，但实时帧率会明显低于 NVIDIA CUDA 构建；后续可在确认驱动与 CUDA 版本后单独替换 PyTorch。
 
 视频文件测试：

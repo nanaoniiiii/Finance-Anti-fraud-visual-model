@@ -50,3 +50,25 @@ def test_json_override_merges_with_defaults(tmp_path):
 
     assert config["risk"]["lingering_seconds"] == 12.0
     assert config["risk"]["multi_person_seconds"] == 1.5
+
+
+def test_non_object_config_section_is_reported_without_crashing():
+    config = default_config()
+    config["risk"] = []
+
+    errors = validate_config(config)
+
+    assert "risk must be an object" in errors
+
+
+def test_tracking_and_ratio_ranges_are_validated():
+    config = default_config()
+    config["tracking"]["smoothing_alpha"] = 1.5
+    config["tracking"]["max_missing_frames"] = -1
+    config["risk"]["wrist_ear_ratio"] = 0.0
+
+    errors = validate_config(config)
+
+    assert any("smoothing_alpha" in item for item in errors)
+    assert any("max_missing_frames" in item for item in errors)
+    assert any("wrist_ear_ratio" in item for item in errors)

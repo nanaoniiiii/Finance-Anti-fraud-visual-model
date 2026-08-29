@@ -55,9 +55,21 @@ def _merge(base: dict[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
 
 def validate_config(config: Mapping[str, Any]) -> list[str]:
     errors: list[str] = []
-    risk = config.get("risk", {})
-    models = config.get("models", {})
-    features = config.get("features", {})
+
+    def section(name: str) -> Mapping[str, Any]:
+        value = config.get(name, {})
+        if not isinstance(value, Mapping):
+            errors.append(f"{name} must be an object")
+            return {}
+        return value
+
+    risk = section("risk")
+    models = section("models")
+    features = section("features")
+    tracking = section("tracking")
+    camera = section("camera")
+    display = section("display")
+    output = section("output")
 
     for name in (
         "lingering_seconds",
@@ -89,10 +101,39 @@ def validate_config(config: Mapping[str, Any]) -> list[str]:
     if features.get("phone_detection", True) and not models.get("phone_path"):
         errors.append("models.phone_path is required when phone detection is enabled")
 
-    tracking = config.get("tracking", {})
     confidence = tracking.get("minimum_confidence")
     if not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
         errors.append("tracking.minimum_confidence must be between 0 and 1")
+
+    alpha = tracking.get("smoothing_alpha")
+    if not isinstance(alpha, (int, float)) or not 0 < alpha <= 1:
+        errors.append("tracking.smoothing_alpha must be within (0, 1]")
+    missing_frames = tracking.get("max_missing_frames")
+    if not isinstance(missing_frames, int) or missing_frames < 0:
+        errors.append("tracking.max_missing_frames must be a non-negative integer")
+    maximum_cost = tracking.get("maximum_match_cost")
+    if not isinstance(maximum_cost, (int, float)) or maximum_cost <= 0:
+        errors.append("tracking.maximum_match_cost must be positive")
+
+    for name in ("wrist_ear_ratio", "nearby_body_ratio"):
+        value = risk.get(name)
+        if not isinstance(value, (int, float)) or value <= 0:
+            errors.append(f"risk.{name} must be positive")
+    speed_ratio = risk.get("lingering_max_speed_ratio")
+    if not isinstance(speed_ratio, (int, float)) or speed_ratio < 0:
+        errors.append("risk.lingering_max_speed_ratio must be non-negative")
+
+    for name in ("width", "height", "fps", "buffer_size"):
+        value = camera.get(name)
+        if not isinstance(value, int) or value <= 0:
+            errors.append(f"camera.{name} must be a positive integer")
+    max_width = display.get("max_width")
+    if not isinstance(max_width, int) or max_width <= 0:
+        errors.append("display.max_width must be a positive integer")
+    if not isinstance(output.get("directory"), str) or not output.get("directory"):
+        errors.append("output.directory must be a non-empty string")
+    if not isinstance(output.get("event_filename"), str) or not output.get("event_filename"):
+        errors.append("output.event_filename must be a non-empty string")
 
     return errors
 

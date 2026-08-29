@@ -79,13 +79,14 @@ def test_event_log_contains_no_raw_frame_or_keypoints(tmp_path):
         duration_seconds=1.2,
     )
 
-    with EventLogger(path) as logger:
+    with EventLogger(path, session_id="session-test") as logger:
         logger.write(decision, timestamp=123.4)
 
     payload = json.loads(path.read_text(encoding="utf-8").strip())
     assert payload["track_id"] == 7
     assert payload["risk_kind"] == "phone_to_ear"
     assert payload["state"] == "alert"
+    assert payload["session_id"] == "session-test"
     assert "frame" not in payload
     assert "image" not in payload
     assert "keypoints" not in payload

@@ -145,7 +145,7 @@ class PersonTrackManager:
         alpha: float,
     ) -> Optional[Keypoint]:
         if new is None:
-            return old
+            return None
         if old is None:
             return new
         return Keypoint(

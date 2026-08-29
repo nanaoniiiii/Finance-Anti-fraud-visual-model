@@ -155,3 +155,64 @@ def test_short_predicted_gap_preserves_lingering_timer():
     decisions = engine.evaluate((recovered,), (), FRAME_SIZE, 20.1)
 
     assert _decision(decisions, RiskKind.LINGERING).state is RiskState.ALERT
+
+
+def test_predicted_gap_resets_unconfirmed_phone_timer():
+    engine = _engine()
+    track = _track(phone_pose=True)
+    phone = PhoneObservation((295, 165, 315, 195), 0.85)
+    engine.evaluate((track,), (phone,), FRAME_SIZE, 0.0)
+
+    predicted = replace(track, predicted=True, missing_frames=1)
+    engine.evaluate((predicted,), (), FRAME_SIZE, 0.5)
+    recovered = replace(track, last_seen=1.1)
+    decisions = engine.evaluate((recovered,), (phone,), FRAME_SIZE, 1.1)
+
+    assert _decision(decisions, RiskKind.PHONE).state is RiskState.CANDIDATE
+
+
+def test_multi_person_alert_releases_for_person_who_exits_region():
+    engine = _engine()
+    first = _track(1, (280, 240))
+    second = _track(2, (380, 240))
+    engine.evaluate((first, second), (), FRAME_SIZE, 0.0)
+    engine.evaluate((first, second), (), FRAME_SIZE, 1.6)
+
+    exiting = replace(second, center=(10.0, 10.0), bbox=(-40.0, -90.0, 60.0, 110.0))
+    retained = engine.evaluate((first, exiting), (), FRAME_SIZE, 1.9)
+    released = engine.evaluate((first, exiting), (), FRAME_SIZE, 2.8)
+
+    assert _decision(retained, RiskKind.MULTI_PERSON, 2).state is RiskState.ALERT
+    assert not any(
+        item.track_id == 2
+        and item.kind is RiskKind.MULTI_PERSON
+        and item.state is RiskState.ALERT
+        for item in released
+    )
+
+
+def test_new_person_does_not_inherit_existing_multi_person_timer():
+    engine = _engine()
+    first = _track(1, (260, 240))
+    second = _track(2, (360, 240))
+    engine.evaluate((first, second), (), FRAME_SIZE, 0.0)
+    engine.evaluate((first, second), (), FRAME_SIZE, 1.6)
+
+    newcomer = _track(3, (460, 240), timestamp=1.7)
+    decisions = engine.evaluate((first, second, newcomer), (), FRAME_SIZE, 1.7)
+
+    assert _decision(decisions, RiskKind.MULTI_PERSON, 1).state is RiskState.ALERT
+    assert _decision(decisions, RiskKind.MULTI_PERSON, 2).state is RiskState.ALERT
+    assert _decision(decisions, RiskKind.MULTI_PERSON, 3).state is RiskState.CANDIDATE
+
+
+def test_removed_track_clears_active_alert_state():
+    engine = _engine()
+    track = _track(phone_pose=True)
+    phone = PhoneObservation((295, 165, 315, 195), 0.85)
+    engine.evaluate((track,), (phone,), FRAME_SIZE, 0.0)
+    engine.evaluate((track,), (phone,), FRAME_SIZE, 1.1)
+
+    engine.evaluate((), (), FRAME_SIZE, 2.0)
+
+    assert engine._active_alerts == {}

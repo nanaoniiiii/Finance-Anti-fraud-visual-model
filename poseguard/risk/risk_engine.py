@@ -46,7 +46,7 @@ class RiskRuleEngine:
         self._phone_confirm_since: dict[int, float] = {}
         self._inside_since: dict[int, float] = {}
         self._inside_path_start: dict[int, float] = {}
-        self._multi_since: float | None = None
+        self._multi_since: dict[int, float] = {}
         self._active_alerts: dict[tuple[int, RiskKind], float] = {}
 
     def evaluate(
@@ -61,6 +61,10 @@ class RiskRuleEngine:
         phone_items = tuple(phones)
         live_ids = {track.track_id for track in all_tracks}
         self._forget_missing(live_ids)
+        for track in all_tracks:
+            if track.predicted:
+                self._phone_candidate_since.pop(track.track_id, None)
+                self._phone_confirm_since.pop(track.track_id, None)
 
         decisions: list[RiskDecision] = []
         inside_tracks = tuple(
@@ -82,7 +86,9 @@ class RiskRuleEngine:
             if lingering_decision is not None:
                 decisions.append(lingering_decision)
 
-        decisions.extend(self._multi_decisions(inside_tracks, timestamp))
+        decisions.extend(
+            self._multi_decisions(visible_tracks, inside_tracks, timestamp)
+        )
 
         decided_ids = {decision.track_id for decision in decisions}
         for track in visible_tracks:
@@ -173,28 +179,15 @@ class RiskRuleEngine:
 
     def _multi_decisions(
         self,
+        visible_tracks: tuple[PersonTrack, ...],
         inside_tracks: tuple[PersonTrack, ...],
         timestamp: float,
     ) -> list[RiskDecision]:
-        if len(inside_tracks) < 2:
-            self._multi_since = None
-            return [
-                decision
-                for track in inside_tracks
-                if (
-                    decision := self._retained_alert(
-                        track,
-                        (track.track_id, RiskKind.MULTI_PERSON),
-                        timestamp,
-                        "疑似多人进入监控区",
-                    )
-                )
-                is not None
-            ]
-
-        if self._multi_since is None:
-            self._multi_since = timestamp
-        duration = timestamp - self._multi_since
+        evidence_ids = (
+            {track.track_id for track in inside_tracks}
+            if len(inside_tracks) >= 2
+            else set()
+        )
         close = any(
             nearby_people(
                 first.center,
@@ -206,17 +199,39 @@ class RiskRuleEngine:
             for first, second in combinations(inside_tracks, 2)
         )
         reason = "疑似多人过近" if close else "疑似多人进入监控区"
-        state = (
-            RiskState.ALERT
-            if duration >= self.multi_person_seconds
-            else RiskState.CANDIDATE
-        )
         results: list[RiskDecision] = []
-        for track in inside_tracks:
+        for track in visible_tracks:
             key = (track.track_id, RiskKind.MULTI_PERSON)
-            if state is RiskState.ALERT:
-                self._active_alerts[key] = timestamp
-            results.append(self._decision(track, RiskKind.MULTI_PERSON, state, reason, duration))
+            if track.track_id in evidence_ids:
+                since = self._multi_since.setdefault(track.track_id, timestamp)
+                duration = timestamp - since
+                state = (
+                    RiskState.ALERT
+                    if duration >= self.multi_person_seconds
+                    else RiskState.CANDIDATE
+                )
+                if state is RiskState.ALERT:
+                    self._active_alerts[key] = timestamp
+                results.append(
+                    self._decision(
+                        track,
+                        RiskKind.MULTI_PERSON,
+                        state,
+                        reason,
+                        duration,
+                    )
+                )
+                continue
+
+            self._multi_since.pop(track.track_id, None)
+            retained = self._retained_alert(
+                track,
+                key,
+                timestamp,
+                "疑似多人进入监控区",
+            )
+            if retained is not None:
+                results.append(retained)
         return results
 
     def _retained_alert(
@@ -259,7 +274,11 @@ class RiskRuleEngine:
             self._phone_confirm_since,
             self._inside_since,
             self._inside_path_start,
+            self._multi_since,
         ):
             for track_id in tuple(mapping):
                 if track_id not in live_ids:
                     mapping.pop(track_id, None)
+        for key in tuple(self._active_alerts):
+            if key[0] not in live_ids:
+                self._active_alerts.pop(key, None)

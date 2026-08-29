@@ -5,18 +5,21 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import TextIO
+from uuid import uuid4
 
 from poseguard.types import RiskDecision
 
 
 class EventLogger:
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, session_id: str | None = None) -> None:
         self.path = Path(path)
+        self.session_id = session_id or uuid4().hex
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._stream: TextIO = self.path.open("a", encoding="utf-8")
 
     def write(self, decision: RiskDecision, *, timestamp: float) -> None:
         payload = {
+            "session_id": self.session_id,
             "timestamp": float(timestamp),
             "track_id": decision.track_id,
             "risk_kind": decision.kind.value,
