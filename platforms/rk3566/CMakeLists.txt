@@ -15,6 +15,14 @@ target_compile_features(poseguard_core PUBLIC cxx_std_17)
 target_compile_options(poseguard_core PRIVATE -Wall -Wextra -Wpedantic)
 
 if(POSEGUARD_ENABLE_BOARD)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(
+    GSTREAMER
+    REQUIRED
+    IMPORTED_TARGET
+    gstreamer-1.0
+    gstreamer-app-1.0
+  )
   find_path(
     RKNN_INCLUDE_DIR
     rknn_api.h
@@ -31,11 +39,22 @@ if(POSEGUARD_ENABLE_BOARD)
     message(FATAL_ERROR "RKNN 2.3.2 headers and AArch64 runtime library were not found")
   endif()
 
-  add_executable(poseguard-rk3566 src/main.cpp src/rknn_engine.cpp)
+  add_executable(
+    poseguard-rk3566
+    src/main.cpp
+    src/rknn_engine.cpp
+    src/video_source.cpp
+  )
   target_link_libraries(poseguard-rk3566 PRIVATE poseguard_core)
   target_link_libraries(poseguard-rk3566 PRIVATE ${RKNN_RUNTIME_LIBRARY})
+  target_link_libraries(poseguard-rk3566 PRIVATE PkgConfig::GSTREAMER)
   target_include_directories(poseguard-rk3566 PRIVATE ${RKNN_INCLUDE_DIR})
-  target_compile_definitions(poseguard-rk3566 PRIVATE POSEGUARD_WITH_RKNN=1)
+  target_compile_definitions(
+    poseguard-rk3566
+    PRIVATE
+      POSEGUARD_WITH_RKNN=1
+      POSEGUARD_WITH_GSTREAMER=1
+  )
   target_compile_options(poseguard-rk3566 PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
@@ -55,4 +74,9 @@ if(POSEGUARD_BUILD_TESTS)
   target_link_libraries(poseguard_decoder_test PRIVATE poseguard_core)
   target_compile_options(poseguard_decoder_test PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME poseguard_decoder COMMAND poseguard_decoder_test)
+
+  add_executable(poseguard_uvc_test tests/test_uvc.cpp src/video_source.cpp)
+  target_link_libraries(poseguard_uvc_test PRIVATE poseguard_core)
+  target_compile_options(poseguard_uvc_test PRIVATE -Wall -Wextra -Wpedantic)
+  add_test(NAME poseguard_uvc COMMAND poseguard_uvc_test)
 endif()
