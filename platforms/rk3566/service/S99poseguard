@@ -1,0 +1,63 @@
+#!/bin/sh
+
+DAEMON=/userdata/poseguard/bin/poseguard-rk3566
+CONFIG=/userdata/poseguard/config/poseguard.conf
+PIDFILE=/var/run/poseguard.pid
+LOGFILE=/userdata/poseguard/logs/poseguard.log
+
+is_running() {
+    [ -s "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
+}
+
+start_service() {
+    mkdir -p /userdata/poseguard/logs /userdata/poseguard/runs
+    if is_running; then
+        echo "PoseGuard already running (pid $(cat "$PIDFILE"))"
+        return 0
+    fi
+    rm -f "$PIDFILE"
+    if [ ! -x "$DAEMON" ]; then
+        echo "PoseGuard executable missing: $DAEMON"
+        return 1
+    fi
+    start-stop-daemon -S -b -m -p "$PIDFILE" -O "$LOGFILE" \
+        -x "$DAEMON" -- --config "$CONFIG"
+    echo "PoseGuard started"
+}
+
+stop_service() {
+    if is_running; then
+        start-stop-daemon -K -p "$PIDFILE"
+        for delay in 1 2 3 4 5; do
+            is_running || break
+            sleep 1
+        done
+    fi
+    rm -f "$PIDFILE"
+    echo "PoseGuard stopped"
+}
+
+case "$1" in
+    start)
+        start_service
+        ;;
+    stop)
+        stop_service
+        ;;
+    restart)
+        stop_service
+        start_service
+        ;;
+    status)
+        if is_running; then
+            echo "PoseGuard running (pid $(cat "$PIDFILE"))"
+            exit 0
+        fi
+        echo "PoseGuard not running"
+        exit 1
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 2
+        ;;
+esac

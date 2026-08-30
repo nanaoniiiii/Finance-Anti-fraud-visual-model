@@ -84,3 +84,14 @@ python main.py --test-timers
 ```
 
 测试结束后重启板子即可恢复原 Launcher。Maix 事件默认写入 `/root/poseguard_maix/data/events.jsonl`，不保存原始图像。
+
+## 泰山派 RK3566 运行
+
+泰山派版本使用 USB 摄像头、RKNN INT8 与板端 GStreamer/MPP，独立完成人体姿态推理、稳定 ID、三类风险和网页告警。构建、部署、开机启动及摄像头热插拔说明见 `platforms/rk3566/README.md`。
+
+```powershell
+& platforms/rk3566/build.ps1 -Target All
+& platforms/rk3566/deploy.ps1
+```
+
+默认网页为 `http://192.168.31.230:8081/`。没有 USB 摄像头时服务不会退出，而是保持开机运行并等待设备接入。
