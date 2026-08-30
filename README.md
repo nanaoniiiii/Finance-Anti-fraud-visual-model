@@ -60,3 +60,27 @@ Windows 原型默认读取：
 - XIAO ESP32-S3 Sense 使用板载 OV3660，并运行单独蒸馏、剪枝和 INT8 量化的 TinyML 姿态模型，不作为其他设备的采集前端。
 
 三端共享风险类型、状态颜色和事件语义，但不强求使用同一个模型文件。具体边界见 `docs/embedded-portability.md`。
+
+## MaixCAM Pro 运行
+
+MaixCAM 版本直接使用板载摄像头、屏幕和 `/root/models/yolo11n_pose.mud`。从 Windows 部署：
+
+```powershell
+& platforms/maixcam/deploy.ps1
+```
+
+板上仅有约 128MB Linux 可见内存。通过 SSH 手动测试前，应先退出 Launcher 及其守护进程，避免与姿态模型同时占用多媒体内存：
+
+```sh
+killall launcher_daemon launcher 2>/dev/null || true
+cd /root/poseguard_maix
+python main.py --max-frames 300
+```
+
+现场快速测试风险计时：
+
+```sh
+python main.py --test-timers
+```
+
+测试结束后重启板子即可恢复原 Launcher。Maix 事件默认写入 `/root/poseguard_maix/data/events.jsonl`，不保存原始图像。
