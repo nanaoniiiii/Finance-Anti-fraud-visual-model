@@ -27,6 +27,7 @@ enum class VideoSourceKind { File, UsbCamera };
 struct VideoSourceConfig {
   VideoSourceKind kind{VideoSourceKind::UsbCamera};
   std::string path{};
+  std::string preferred_device{};
   std::filesystem::path sysfs_root{"/sys/class/video4linux"};
   int rescan_interval_ms{2000};
 };

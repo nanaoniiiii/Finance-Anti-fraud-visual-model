@@ -299,9 +299,22 @@ struct VideoSource::Impl {
       return false;
     }
     try {
-      const auto format = choose_camera_format(devices.front().path);
+      const UvcDevice* selected = &devices.front();
+      if (!config.preferred_device.empty()) {
+        const auto match = std::find_if(
+            devices.begin(), devices.end(), [&](const UvcDevice& device) {
+              return device.path == config.preferred_device;
+            });
+        if (match == devices.end()) {
+          error = "waiting for configured USB camera: " +
+                  config.preferred_device;
+          return false;
+        }
+        selected = &*match;
+      }
+      const auto format = choose_camera_format(selected->path);
       const std::string source = "v4l2src device=" +
-                                 quote_pipeline_value(devices.front().path) +
+                                 quote_pipeline_value(selected->path) +
                                  " io-mode=2 ! ";
       const std::string sink_suffix =
           " ! videoconvert ! video/x-raw,format=RGB ! appsink "
@@ -313,17 +326,17 @@ struct VideoSource::Impl {
             ",height=" + std::to_string(format.height) +
             ",framerate=" + std::to_string(format.fps) + "/1";
         if (launch(source + caps + " ! jpegparse ! mppjpegdec" + sink_suffix,
-                   devices.front().path)) {
+                   selected->path)) {
           return true;
         }
         return launch(source + caps + " ! jpegparse ! jpegdec" + sink_suffix,
-                      devices.front().path);
+                      selected->path);
       }
       const std::string caps =
           "video/x-raw,format=YUY2,width=" + std::to_string(format.width) +
           ",height=" + std::to_string(format.height) +
           ",framerate=" + std::to_string(format.fps) + "/1";
-      return launch(source + caps + sink_suffix, devices.front().path);
+      return launch(source + caps + sink_suffix, selected->path);
     } catch (const std::exception& exception) {
       error = exception.what();
       return false;

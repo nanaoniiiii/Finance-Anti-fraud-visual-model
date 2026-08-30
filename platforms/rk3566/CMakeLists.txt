@@ -15,6 +15,7 @@ target_compile_features(poseguard_core PUBLIC cxx_std_17)
 target_compile_options(poseguard_core PRIVATE -Wall -Wextra -Wpedantic)
 
 if(POSEGUARD_ENABLE_BOARD)
+  find_package(Threads REQUIRED)
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(
     GSTREAMER
@@ -43,11 +44,13 @@ if(POSEGUARD_ENABLE_BOARD)
     poseguard-rk3566
     src/main.cpp
     src/rknn_engine.cpp
+    src/runtime.cpp
     src/video_source.cpp
   )
   target_link_libraries(poseguard-rk3566 PRIVATE poseguard_core)
   target_link_libraries(poseguard-rk3566 PRIVATE ${RKNN_RUNTIME_LIBRARY})
   target_link_libraries(poseguard-rk3566 PRIVATE PkgConfig::GSTREAMER)
+  target_link_libraries(poseguard-rk3566 PRIVATE Threads::Threads)
   target_include_directories(poseguard-rk3566 PRIVATE ${RKNN_INCLUDE_DIR})
   target_compile_definitions(
     poseguard-rk3566
@@ -79,4 +82,9 @@ if(POSEGUARD_BUILD_TESTS)
   target_link_libraries(poseguard_uvc_test PRIVATE poseguard_core)
   target_compile_options(poseguard_uvc_test PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME poseguard_uvc COMMAND poseguard_uvc_test)
+
+  add_executable(poseguard_runtime_test tests/test_runtime.cpp src/runtime.cpp)
+  target_link_libraries(poseguard_runtime_test PRIVATE poseguard_core)
+  target_compile_options(poseguard_runtime_test PRIVATE -Wall -Wextra -Wpedantic)
+  add_test(NAME poseguard_runtime COMMAND poseguard_runtime_test)
 endif()

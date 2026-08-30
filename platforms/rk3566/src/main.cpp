@@ -4,6 +4,7 @@
 #include <string_view>
 
 #include "poseguard/video_source.hpp"
+#include "poseguard/runtime.hpp"
 
 #ifdef POSEGUARD_WITH_RKNN
 #include "poseguard/rknn_pose.hpp"
@@ -53,6 +54,60 @@ int run_input_smoke(const std::string& video_path, int max_frames) {
   }
   return 0;
 }
+
+void print_usage() {
+  std::cout
+      << "Usage:\n"
+      << "  poseguard-rk3566 --version\n"
+      << "  poseguard-rk3566 --model-smoke MODEL\n"
+      << "  poseguard-rk3566 --input-smoke VIDEO [--max-frames N]\n"
+      << "  poseguard-rk3566 --config FILE [--source camera|video] "
+         "[--video FILE] [--device /dev/videoN] [--model FILE] "
+         "[--benchmark] [--max-frames N] [--no-http]\n";
+}
+
+poseguard::RuntimeConfig parse_runtime_config(int argc, char* argv[]) {
+  poseguard::RuntimeConfig config{};
+  for (int index = 1; index + 1 < argc; ++index) {
+    if (std::string_view{argv[index]} == "--config") {
+      config = poseguard::load_runtime_config(argv[index + 1]);
+      break;
+    }
+  }
+
+  for (int index = 1; index < argc; ++index) {
+    const std::string_view option{argv[index]};
+    auto require_value = [&]() -> std::string {
+      if (index + 1 >= argc) {
+        throw std::invalid_argument(std::string(option) + " requires a value");
+      }
+      return argv[++index];
+    };
+    if (option == "--config") {
+      require_value();
+    } else if (option == "--source") {
+      config.source = require_value();
+    } else if (option == "--video") {
+      config.video_path = require_value();
+    } else if (option == "--device") {
+      config.preferred_device = require_value();
+    } else if (option == "--model") {
+      config.model_path = require_value();
+    } else if (option == "--max-frames") {
+      config.max_frames = std::stoi(require_value());
+      if (config.max_frames <= 0) {
+        throw std::invalid_argument("--max-frames must be positive");
+      }
+    } else if (option == "--benchmark") {
+      config.benchmark = true;
+    } else if (option == "--no-http") {
+      config.http_enabled = false;
+    } else {
+      throw std::invalid_argument("unknown option: " + std::string(option));
+    }
+  }
+  return config;
+}
 }
 
 int main(int argc, char* argv[]) {
@@ -98,7 +153,14 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  std::cout << "Usage: poseguard-rk3566 --version | --model-smoke MODEL | "
-               "--input-smoke VIDEO [--max-frames N]\n";
-  return argc == 1 ? 0 : 2;
+  if (argc == 1 || (argc == 2 && std::string_view{argv[1]} == "--help")) {
+    print_usage();
+    return 0;
+  }
+  try {
+    return poseguard::run_application(parse_runtime_config(argc, argv));
+  } catch (const std::exception& error) {
+    std::cerr << "PoseGuard failed: " << error.what() << '\n';
+    return 2;
+  }
 }
