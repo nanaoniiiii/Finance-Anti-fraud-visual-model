@@ -79,6 +79,8 @@ struct TrackState {
   Point center{};
   double first_seen_seconds{};
   double last_seen_seconds{};
+  float normalized_center_speed{};
+  float pose_motion{};
   int visible_frames{};
   bool confirmed{};
   bool predicted{};
