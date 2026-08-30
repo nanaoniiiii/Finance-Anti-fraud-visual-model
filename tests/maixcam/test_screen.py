@@ -100,3 +100,29 @@ def test_metrics_label_contains_people_and_fps():
 
     labels = [call[1][2] for call in frame.calls if call[0] == "string"]
     assert any("FPS 18.4" in label and "P 1" in label for label in labels)
+
+
+def test_color_factory_converts_every_maix_draw_color():
+    frame = FakeImage()
+    points = [None] * 17
+    points[5] = (30.0, 40.0)
+    points[6] = (60.0, 40.0)
+
+    renderer = ScreenRenderer(
+        color_factory=lambda red, green, blue: (
+            "maix-color",
+            red,
+            green,
+            blue,
+        )
+    )
+    renderer.render(
+        frame,
+        [track(keypoints=points)],
+        [decision("alert")],
+        {"fps": 20.0, "inference_ms": 2.5},
+    )
+
+    colors = [call[2]["color"] for call in frame.calls]
+    assert colors
+    assert all(color[0] == "maix-color" for color in colors)

@@ -30,6 +30,13 @@ STATE_COLOR = {"normal": YELLOW, "candidate": ORANGE, "alert": RED}
 
 
 class ScreenRenderer:
+    def __init__(self, color_factory=None):
+        factory = color_factory or (lambda red, green, blue: (red, green, blue))
+        self._state_colors = {
+            state: factory(*color) for state, color in STATE_COLOR.items()
+        }
+        self._white = factory(*WHITE)
+
     def render(self, frame, tracks, decisions, metrics):
         by_track = {}
         for item in decisions:
@@ -39,7 +46,7 @@ class ScreenRenderer:
             track_decisions = by_track.get(track["track_id"], [])
             strongest = self._strongest(track_decisions)
             state = strongest["state"] if strongest is not None else "normal"
-            color = STATE_COLOR[state]
+            color = self._state_colors[state]
             x1, y1, x2, y2 = (int(value) for value in track["bbox"])
             frame.draw_rect(
                 x1,
@@ -64,7 +71,7 @@ class ScreenRenderer:
                 float(metrics.get("inference_ms", 0.0)),
                 len([track for track in tracks if not track.get("predicted", False)]),
             ),
-            color=WHITE,
+            color=self._white,
         )
         return frame
 

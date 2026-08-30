@@ -109,11 +109,11 @@ def parse_args(argv=None):
 
 
 def run(*, max_frames=0, no_display=False, test_timers=False):
-    from maix import app, camera, display, nn
+    from maix import app, camera, display, image, nn
 
     settings = dict(CONFIG)
     pipeline = build_pipeline(settings, test_timers=test_timers)
-    renderer = ScreenRenderer()
+    renderer = ScreenRenderer(color_factory=image.Color.from_rgb)
     event_store = EventStore(settings["event_path"])
 
     detector = None
