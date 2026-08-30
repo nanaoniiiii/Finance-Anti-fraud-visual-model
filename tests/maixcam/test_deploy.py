@@ -1,6 +1,8 @@
 from pathlib import Path
 
-from platforms.maixcam.deploy import runtime_files
+import pytest
+
+from platforms.maixcam.deploy import runtime_files, validate_remote_dir
 
 
 def test_runtime_files_include_only_board_modules(tmp_path):
@@ -23,3 +25,16 @@ def test_runtime_files_are_sorted(tmp_path):
         "screen.py",
         "zeta.py",
     ]
+
+
+@pytest.mark.parametrize(
+    "remote_dir",
+    ("/root", "/root/", "/root/.", "/"),
+)
+def test_validate_remote_dir_rejects_launcher_locations(remote_dir):
+    with pytest.raises(ValueError, match="protected"):
+        validate_remote_dir(remote_dir)
+
+
+def test_validate_remote_dir_accepts_poseguard_directory():
+    assert validate_remote_dir("/root/poseguard_maix") == "/root/poseguard_maix"

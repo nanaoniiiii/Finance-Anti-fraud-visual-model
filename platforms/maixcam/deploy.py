@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 EXCLUDED_MODULES = {"__init__.py", "deploy.py"}
+PROTECTED_REMOTE_DIRS = {"/", "/root"}
 
 
 def runtime_files(source_dir):
@@ -21,6 +22,15 @@ def runtime_files(source_dir):
         ),
         key=lambda path: path.name,
     )
+
+
+def validate_remote_dir(remote_dir):
+    normalized = posixpath.normpath(str(remote_dir))
+    if not normalized.startswith("/") or normalized in PROTECTED_REMOTE_DIRS:
+        raise ValueError(
+            "protected or non-absolute remote directory: {}".format(remote_dir)
+        )
+    return normalized
 
 
 def ensure_remote_dir(sftp, remote_dir):
@@ -44,6 +54,7 @@ def deploy(host, user, password, remote_dir, source_dir=None):
             "Paramiko is required: python -m pip install --user paramiko"
         ) from exc
 
+    remote_dir = validate_remote_dir(remote_dir)
     source = Path(source_dir or Path(__file__).resolve().parent)
     files = runtime_files(source)
     if not files:
