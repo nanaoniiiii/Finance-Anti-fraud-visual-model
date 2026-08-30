@@ -3,5 +3,10 @@ __pycache__/
 .pytest_cache/
 *.py[cod]
 models/*.pt
+models/*.onnx
+models/*.rknn
 runs/*
 !runs/.gitkeep
+build/rk3566-*/
+platforms/rk3566/artifacts/
+platforms/rk3566/media/*.mp4
