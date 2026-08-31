@@ -1,7 +1,17 @@
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("filename", ("setup_windows.bat", "run_windows.bat"))
+def test_windows_launcher_uses_crlf_line_endings(filename):
+    content = (ROOT / filename).read_bytes()
+
+    assert b"\r\n" in content
+    assert b"\n" not in content.replace(b"\r\n", b"")
 
 
 def test_setup_launcher_creates_environment_and_fetches_models():
