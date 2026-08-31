@@ -20,6 +20,10 @@ from poseguard.types import (
 )
 
 
+PHONE_ALERT_REASON = "疑似与他人通话"
+PHONE_CANDIDATE_REASON = "疑似与他人通话姿态待手机确认"
+
+
 class RiskRuleEngine:
     def __init__(
         self,
@@ -117,7 +121,7 @@ class RiskRuleEngine:
         if not sides:
             self._phone_candidate_since.pop(track.track_id, None)
             self._phone_confirm_since.pop(track.track_id, None)
-            return self._retained_alert(track, key, timestamp, "疑似贴耳通话")
+            return self._retained_alert(track, key, timestamp, PHONE_ALERT_REASON)
 
         candidate_since = self._phone_candidate_since.setdefault(track.track_id, timestamp)
         matched = any(
@@ -134,20 +138,20 @@ class RiskRuleEngine:
                     track,
                     RiskKind.PHONE,
                     RiskState.ALERT,
-                    "疑似贴耳通话",
+                    PHONE_ALERT_REASON,
                     duration,
                 )
         else:
             self._phone_confirm_since.pop(track.track_id, None)
 
-        retained = self._retained_alert(track, key, timestamp, "疑似贴耳通话")
+        retained = self._retained_alert(track, key, timestamp, PHONE_ALERT_REASON)
         if retained is not None:
             return retained
         return self._decision(
             track,
             RiskKind.PHONE,
             RiskState.CANDIDATE,
-            "贴耳姿态待手机确认",
+            PHONE_CANDIDATE_REASON,
             timestamp - candidate_since,
         )
 

@@ -82,7 +82,7 @@ def test_phone_match_turns_red_after_one_second():
     result = _decision(decisions, RiskKind.PHONE)
     assert result.state is RiskState.ALERT
     assert result.color == (0, 0, 255)
-    assert "贴耳通话" in result.reason
+    assert "与他人通话" in result.reason
 
 
 def test_two_people_inside_region_turn_red_after_one_point_five_seconds():
