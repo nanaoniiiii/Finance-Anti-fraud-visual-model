@@ -10,3 +10,6 @@ runs/*
 build/rk3566-*/
 platforms/rk3566/artifacts/
 platforms/rk3566/media/*.mp4
+
+# 本地软件著作权申请材料包含提交文档、截图和审计记录，不纳入公开仓库。
+软件著作权申请资料/
