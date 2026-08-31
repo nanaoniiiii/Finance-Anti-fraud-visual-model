@@ -15,6 +15,7 @@ namespace {
 
 constexpr int kModelSize = 320;
 constexpr int kPoseChannels = 56;
+constexpr std::array<int, 4> kSplitChannels{4, 1, 51, 17};
 
 void require_rknn(int code, const char* operation) {
   if (code != RKNN_SUCC) {
@@ -101,12 +102,78 @@ std::vector<std::uint8_t> make_letterbox(const Frame& frame,
   return output;
 }
 
+int output_anchor_count(const rknn_tensor_attr& attribute,
+                        int expected_channels) {
+  if (attribute.n_dims != 3 || attribute.dims[0] != 1) {
+    throw std::runtime_error("pose output must be rank 3 with batch size 1");
+  }
+  if (attribute.dims[1] == static_cast<std::uint32_t>(expected_channels)) {
+    return static_cast<int>(attribute.dims[2]);
+  }
+  if (attribute.dims[2] == static_cast<std::uint32_t>(expected_channels)) {
+    return static_cast<int>(attribute.dims[1]);
+  }
+  throw std::runtime_error("pose output channel count does not match contract");
+}
+
+std::vector<float> decode_tensor(const rknn_tensor_attr& attribute,
+                                 const rknn_output& output) {
+  const std::size_t count = attribute.n_elems;
+  if (output.buf == nullptr && count != 0) {
+    throw std::runtime_error("RKNN returned a null output buffer");
+  }
+  if (attribute.type == RKNN_TENSOR_INT8) {
+    return dequantize_int8(static_cast<const std::int8_t*>(output.buf), count,
+                           attribute.zp, attribute.scale);
+  }
+  std::vector<float> decoded(count);
+  if (attribute.type == RKNN_TENSOR_UINT8) {
+    const auto* values = static_cast<const std::uint8_t*>(output.buf);
+    for (std::size_t index = 0; index < count; ++index) {
+      decoded[index] =
+          (static_cast<std::int32_t>(values[index]) - attribute.zp) *
+          attribute.scale;
+    }
+    return decoded;
+  }
+  if (attribute.type == RKNN_TENSOR_FLOAT32) {
+    const auto* values = static_cast<const float*>(output.buf);
+    std::copy(values, values + count, decoded.begin());
+    return decoded;
+  }
+  throw std::runtime_error("unsupported RKNN output tensor type");
+}
+
+std::vector<float> to_channel_major(const std::vector<float>& values,
+                                    const rknn_tensor_attr& attribute,
+                                    int expected_channels,
+                                    int expected_anchors) {
+  const int anchors = output_anchor_count(attribute, expected_channels);
+  if (anchors != expected_anchors ||
+      values.size() !=
+          static_cast<std::size_t>(expected_channels * expected_anchors)) {
+    throw std::runtime_error("pose output anchor count does not match contract");
+  }
+  if (attribute.dims[1] == static_cast<std::uint32_t>(expected_channels)) {
+    return values;
+  }
+
+  std::vector<float> transposed(values.size());
+  for (int anchor = 0; anchor < anchors; ++anchor) {
+    for (int channel = 0; channel < expected_channels; ++channel) {
+      transposed[static_cast<std::size_t>(channel) * anchors + anchor] =
+          values[static_cast<std::size_t>(anchor) * expected_channels + channel];
+    }
+  }
+  return transposed;
+}
+
 }  // namespace
 
 struct RknnPoseEngine::Impl {
   rknn_context context{};
   rknn_tensor_attr input_attr{};
-  rknn_tensor_attr output_attr{};
+  std::vector<rknn_tensor_attr> output_attrs;
   std::array<int, 3> shape{};
   std::string runtime{};
   std::string driver{};
@@ -137,8 +204,10 @@ RknnPoseEngine::RknnPoseEngine(const std::string& model_path,
   require_rknn(rknn_query(impl_->context, RKNN_QUERY_IN_OUT_NUM, &io_count,
                           sizeof(io_count)),
                "I/O query");
-  if (io_count.n_input != 1 || io_count.n_output != 1) {
-    throw std::runtime_error("pose model must have exactly one input and output");
+  if (io_count.n_input != 1 ||
+      (io_count.n_output != 1 && io_count.n_output != 4)) {
+    throw std::runtime_error(
+        "pose model must have one combined or four split outputs");
   }
 
   impl_->input_attr.index = 0;
@@ -162,21 +231,24 @@ RknnPoseEngine::RknnPoseEngine(const std::string& model_path,
     throw std::runtime_error("pose input must be static RGB 320x320");
   }
 
-  impl_->output_attr.index = 0;
-  require_rknn(rknn_query(impl_->context, RKNN_QUERY_OUTPUT_ATTR,
-                          &impl_->output_attr, sizeof(impl_->output_attr)),
-               "output attribute query");
-  if (impl_->output_attr.n_dims != 3) {
-    throw std::runtime_error("pose output must be rank 3");
+  impl_->output_attrs.resize(io_count.n_output);
+  int anchors = 0;
+  for (std::size_t index = 0; index < impl_->output_attrs.size(); ++index) {
+    auto& attribute = impl_->output_attrs[index];
+    attribute.index = static_cast<std::uint32_t>(index);
+    require_rknn(rknn_query(impl_->context, RKNN_QUERY_OUTPUT_ATTR, &attribute,
+                            sizeof(attribute)),
+                 "output attribute query");
+    const int expected_channels =
+        impl_->output_attrs.size() == 1 ? kPoseChannels : kSplitChannels[index];
+    const int current_anchors =
+        output_anchor_count(attribute, expected_channels);
+    if (current_anchors <= 0 || (anchors != 0 && current_anchors != anchors)) {
+      throw std::runtime_error("pose outputs use inconsistent anchor counts");
+    }
+    anchors = current_anchors;
   }
-  for (std::size_t index = 0; index < impl_->shape.size(); ++index) {
-    impl_->shape[index] = static_cast<int>(impl_->output_attr.dims[index]);
-  }
-  if (impl_->shape[0] != 1 ||
-      (impl_->shape[1] != kPoseChannels &&
-       impl_->shape[2] != kPoseChannels)) {
-    throw std::runtime_error("pose output must contain 56 channels");
-  }
+  impl_->shape = {1, kPoseChannels, anchors};
 
   rknn_sdk_version version{};
   require_rknn(rknn_query(impl_->context, RKNN_QUERY_SDK_VERSION, &version,
@@ -205,40 +277,43 @@ std::vector<PoseObservation> RknnPoseEngine::infer(const Frame& frame,
   const auto started = std::chrono::steady_clock::now();
   require_rknn(rknn_inputs_set(impl_->context, 1, &input), "input set");
   require_rknn(rknn_run(impl_->context, nullptr), "inference");
-  rknn_output output{};
-  output.index = 0;
-  output.want_float = 0;
-  output.is_prealloc = 0;
-  require_rknn(rknn_outputs_get(impl_->context, 1, &output, nullptr),
+  std::vector<rknn_output> outputs(impl_->output_attrs.size());
+  for (std::size_t index = 0; index < outputs.size(); ++index) {
+    outputs[index].index = static_cast<std::uint32_t>(index);
+    outputs[index].want_float = 0;
+    outputs[index].is_prealloc = 0;
+  }
+  require_rknn(rknn_outputs_get(
+                   impl_->context, static_cast<std::uint32_t>(outputs.size()),
+                   outputs.data(), nullptr),
                "output retrieval");
 
   std::vector<float> decoded;
   try {
-    const std::size_t count = impl_->output_attr.n_elems;
-    if (impl_->output_attr.type == RKNN_TENSOR_INT8) {
-      decoded = dequantize_int8(static_cast<const std::int8_t*>(output.buf),
-                                count, impl_->output_attr.zp,
-                                impl_->output_attr.scale);
-    } else if (impl_->output_attr.type == RKNN_TENSOR_UINT8) {
-      const auto* values = static_cast<const std::uint8_t*>(output.buf);
-      decoded.resize(count);
-      for (std::size_t index = 0; index < count; ++index) {
-        decoded[index] =
-            (static_cast<std::int32_t>(values[index]) -
-             impl_->output_attr.zp) *
-            impl_->output_attr.scale;
-      }
-    } else if (impl_->output_attr.type == RKNN_TENSOR_FLOAT32) {
-      const auto* values = static_cast<const float*>(output.buf);
-      decoded.assign(values, values + count);
+    const int anchors = impl_->shape[2];
+    if (outputs.size() == 1) {
+      decoded = to_channel_major(
+          decode_tensor(impl_->output_attrs[0], outputs[0]),
+          impl_->output_attrs[0], kPoseChannels, anchors);
     } else {
-      throw std::runtime_error("unsupported RKNN output tensor type");
+      std::array<std::vector<float>, 4> components;
+      for (std::size_t index = 0; index < components.size(); ++index) {
+        components[index] = to_channel_major(
+            decode_tensor(impl_->output_attrs[index], outputs[index]),
+            impl_->output_attrs[index], kSplitChannels[index], anchors);
+      }
+      decoded = merge_split_pose_outputs(
+          components[0], components[1], components[2], components[3], anchors);
     }
   } catch (...) {
-    rknn_outputs_release(impl_->context, 1, &output);
+    rknn_outputs_release(impl_->context,
+                         static_cast<std::uint32_t>(outputs.size()),
+                         outputs.data());
     throw;
   }
-  require_rknn(rknn_outputs_release(impl_->context, 1, &output),
+  require_rknn(rknn_outputs_release(
+                   impl_->context, static_cast<std::uint32_t>(outputs.size()),
+                   outputs.data()),
                "output release");
   const auto finished = std::chrono::steady_clock::now();
   metrics.inference_ms =

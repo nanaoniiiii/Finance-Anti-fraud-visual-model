@@ -88,6 +88,7 @@ if ($Action -in @("Compare", "All")) {
         "python", "-m", "platforms.rk3566.tools.compare_outputs",
         "--onnx", "/workspace/platforms/rk3566/artifacts/model/poseguard-yolo11n-pose-320.onnx",
         "--rknn", "/workspace/platforms/rk3566/artifacts/model/poseguard-yolo11n-pose-320-int8.rknn",
+        "--dataset", "/workspace/platforms/rk3566/artifacts/model/calibration/dataset.txt",
         "--images", "/workspace/platforms/rk3566/artifacts/model/comparison",
         "--report", "/workspace/platforms/rk3566/artifacts/model/comparison-report.json"
     )

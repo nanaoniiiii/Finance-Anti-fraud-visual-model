@@ -40,6 +40,20 @@ void set_person(std::vector<float>& tensor, int anchor, float score,
 }  // namespace
 
 int main() {
+  const int split_anchors = 2;
+  std::vector<float> boxes(4 * split_anchors, 1.0F);
+  std::vector<float> scores(split_anchors, 0.75F);
+  std::vector<float> keypoints(51 * split_anchors, 2.0F);
+  std::vector<float> keypoint_scores(17 * split_anchors, 0.90F);
+  const auto merged = poseguard::merge_split_pose_outputs(
+      boxes, scores, keypoints, keypoint_scores, split_anchors);
+  CHECK(merged.size() == static_cast<std::size_t>(56 * split_anchors));
+  CHECK(std::abs(merged[4 * split_anchors] - 0.75F) < 0.001F);
+  for (int point = 0; point < 17; ++point) {
+    CHECK(std::abs(merged[(7 + point * 3) * split_anchors] - 0.90F) <
+          0.001F);
+  }
+
   std::vector<float> output(static_cast<std::size_t>(kChannels) * kAnchors,
                             0.0F);
   set_person(output, 100, 0.91F);

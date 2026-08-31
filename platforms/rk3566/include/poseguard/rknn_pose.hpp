@@ -23,6 +23,11 @@ std::vector<float> dequantize_int8(const std::int8_t* values,
                                    std::size_t value_count,
                                    std::int32_t zero_point, float scale);
 
+std::vector<float> merge_split_pose_outputs(
+    const std::vector<float>& boxes, const std::vector<float>& scores,
+    const std::vector<float>& keypoints,
+    const std::vector<float>& keypoint_scores, int anchor_count);
+
 std::vector<PoseObservation> decode_pose(
     const std::vector<float>& output, const std::array<int, 3>& shape,
     const Letterbox& transform, float score_threshold,

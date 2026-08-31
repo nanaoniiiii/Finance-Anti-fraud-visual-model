@@ -49,6 +49,32 @@ std::vector<float> dequantize_int8(const std::int8_t* values,
   return output;
 }
 
+std::vector<float> merge_split_pose_outputs(
+    const std::vector<float>& boxes, const std::vector<float>& scores,
+    const std::vector<float>& keypoints,
+    const std::vector<float>& keypoint_scores, int anchor_count) {
+  if (anchor_count <= 0 ||
+      boxes.size() != static_cast<std::size_t>(4 * anchor_count) ||
+      scores.size() != static_cast<std::size_t>(anchor_count) ||
+      keypoints.size() != static_cast<std::size_t>(51 * anchor_count) ||
+      keypoint_scores.size() != static_cast<std::size_t>(17 * anchor_count)) {
+    throw std::invalid_argument("split pose output sizes do not match");
+  }
+
+  std::vector<float> output(static_cast<std::size_t>(kPoseChannels) *
+                            anchor_count);
+  std::copy(boxes.begin(), boxes.end(), output.begin());
+  std::copy(scores.begin(), scores.end(), output.begin() + 4 * anchor_count);
+  std::copy(keypoints.begin(), keypoints.end(),
+            output.begin() + 5 * anchor_count);
+  for (int point = 0; point < 17; ++point) {
+    std::copy(keypoint_scores.begin() + point * anchor_count,
+              keypoint_scores.begin() + (point + 1) * anchor_count,
+              output.begin() + (7 + point * 3) * anchor_count);
+  }
+  return output;
+}
+
 std::vector<PoseObservation> decode_pose(
     const std::vector<float>& output, const std::array<int, 3>& shape,
     const Letterbox& transform, float score_threshold,

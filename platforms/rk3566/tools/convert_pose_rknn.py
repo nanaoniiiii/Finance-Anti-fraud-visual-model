@@ -19,7 +19,7 @@ def convert_model(onnx_path: Path, dataset_path: Path, output_path: Path) -> Non
 
     inspect_onnx_output(onnx_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    converter = RKNN(verbose=True)
+    converter = RKNN(verbose=False)
     try:
         require_success(
             converter.config(

@@ -21,7 +21,7 @@ RUN python -m pip install --no-cache-dir --upgrade pip \
     && python -m pip install --no-cache-dir \
        numpy==1.26.4 \
        ml_dtypes==0.5.1 \
-       onnx==1.18.0 \
+       onnx==1.16.1 \
        onnxruntime==1.22.1 \
        onnxslim==0.1.96 \
        protobuf==4.25.4 \
