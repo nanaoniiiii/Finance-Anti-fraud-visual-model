@@ -46,7 +46,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "multi_person_seconds": 1.5,
         "phone_confirm_seconds": 1.0,
         "alert_release_seconds": 0.8,
-        "wrist_ear_ratio": 0.13,
+        "wrist_ear_ratio": 0.28,
         "nearby_body_ratio": 0.8,
         "lingering_max_speed_ratio": 0.12,
         "lingering_max_pose_motion_ratio": 0.04,

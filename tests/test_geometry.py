@@ -21,7 +21,7 @@ def test_hand_near_ear_is_scale_normalized():
     assert not hand_near_ear((48, 42), (70, 40), body_height=100, ratio=0.08)
 
 
-def test_candidate_phone_side_requires_arm_geometry_and_standing_pose():
+def test_candidate_phone_side_requires_arm_geometry():
     person = _person(
         {
             3: (38, 35),
@@ -39,11 +39,18 @@ def test_candidate_phone_side_requires_arm_geometry_and_standing_pose():
     assert candidate_phone_sides(person, wrist_ear_ratio=0.13) == ("left",)
 
 
-def test_missing_leg_evidence_is_not_called_standing():
-    person = _person({3: (38, 35), 5: (40, 65), 7: (33, 55), 9: (39, 39)})
+def test_close_upper_body_phone_pose_does_not_require_visible_legs():
+    person = _person(
+        {
+            3: (38, 35),
+            5: (40, 65),
+            7: (33, 95),
+            9: (39, 39),
+        }
+    )
 
     assert not is_standing(person)
-    assert candidate_phone_sides(person, wrist_ear_ratio=0.13) == ()
+    assert candidate_phone_sides(person, wrist_ear_ratio=0.28) == ("left",)
 
 
 def test_inside_region_uses_normalized_frame_coordinates():

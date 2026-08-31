@@ -79,8 +79,6 @@ def candidate_phone_sides(
     person: PersonObservation,
     wrist_ear_ratio: float,
 ) -> tuple[str, ...]:
-    if not is_standing(person):
-        return ()
     body_height = person.bbox[3] - person.bbox[1]
     candidates: list[str] = []
     for side in ("left", "right"):
@@ -91,7 +89,7 @@ def candidate_phone_sides(
         if not all((ear, shoulder, elbow, wrist)):
             continue
         assert ear and shoulder and elbow and wrist
-        arm_raised = wrist.y <= elbow.y + body_height * 0.06 and elbow.y < shoulder.y
+        arm_raised = wrist.y <= elbow.y + body_height * 0.06
         if arm_raised and hand_near_ear(wrist, ear, body_height, wrist_ear_ratio):
             candidates.append(side)
     return tuple(candidates)
