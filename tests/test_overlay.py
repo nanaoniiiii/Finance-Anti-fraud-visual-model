@@ -32,7 +32,7 @@ def test_renderer_preserves_input_and_shape_for_alert():
         track_id=1,
         kind=RiskKind.PHONE,
         state=RiskState.ALERT,
-        reason="疑似贴耳通话",
+        reason="疑似与他人通话",
         confidence=0.9,
         bbox=(20, 20, 120, 220),
         duration_seconds=1.2,
@@ -63,7 +63,7 @@ def test_track_summary_combines_all_risk_reasons():
             track_id=1,
             kind=RiskKind.PHONE,
             state=RiskState.ALERT,
-            reason="疑似贴耳通话",
+            reason="疑似与他人通话",
             confidence=0.9,
             bbox=(20, 20, 120, 220),
             duration_seconds=1.2,
@@ -82,7 +82,7 @@ def test_track_summary_combines_all_risk_reasons():
     label, strongest = summarize_track_decisions(1, decisions)
 
     assert "疑似风险行为" in label
-    assert "疑似贴耳通话" in label
+    assert "疑似与他人通话" in label
     assert "疑似长时间停留" in label
     assert "21.0s" in label
     assert strongest.state is RiskState.ALERT
@@ -90,7 +90,7 @@ def test_track_summary_combines_all_risk_reasons():
 
 def test_long_risk_label_is_split_into_at_most_two_drawable_lines():
     label = (
-        "ID 1 | 疑似风险行为 | 疑似贴耳通话 + 疑似长时间停留 + "
+        "ID 1 | 疑似风险行为 | 疑似与他人通话 + 疑似长时间停留 + "
         "疑似多人进入监控区 | 21.0s"
     )
 
@@ -109,7 +109,7 @@ def test_renderer_accepts_recent_event_summary():
         (_track(),),
         (),
         {"fps": 20.0, "inference_ms": 35.0},
-        recent_events=("ID 1: 疑似贴耳通话",),
+        recent_events=("ID 1: 疑似与他人通话",),
     )
 
     assert rendered.shape == frame.shape

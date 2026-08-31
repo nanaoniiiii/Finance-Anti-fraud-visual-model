@@ -148,7 +148,7 @@ def test_recent_events_deduplicate_by_target_and_risk_kind():
         track_id=7,
         kind=RiskKind.PHONE,
         state=RiskState.ALERT,
-        reason="疑似贴耳通话",
+        reason="疑似与他人通话",
         confidence=0.9,
         bbox=(0.0, 0.0, 10.0, 20.0),
     )
@@ -158,4 +158,4 @@ def test_recent_events_deduplicate_by_target_and_risk_kind():
 
     assert len(summaries) == 2
     assert ((7, RiskKind.LINGERING.value), "ID 7: 疑似长时间停留（更新）") in summaries
-    assert ((7, RiskKind.PHONE.value), "ID 7: 疑似贴耳通话") in summaries
+    assert ((7, RiskKind.PHONE.value), "ID 7: 疑似与他人通话") in summaries

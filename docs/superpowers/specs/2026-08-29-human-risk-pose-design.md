@@ -69,7 +69,7 @@ PoseBackend(YOLO11n-pose)
 - `poseguard/backends/yolo_pose_backend.py`：Windows 的 YOLO11n-pose 适配。
 - `poseguard/backends/phone_backend.py`：手机目标检测接口和可选实现。
 - `poseguard/tracking/person_tracks.py`：原创的轻量轨迹匹配和状态平滑。
-- `poseguard/risk/risk_engine.py`：多人、贴耳通话、长时间停留状态机。
+- `poseguard/risk/risk_engine.py`：多人、疑似与他人通话、长时间停留状态机。
 - `poseguard/risk/geometry.py`：关键点距离、相对尺度、区域和邻近关系计算。
 - `poseguard/ui/overlay.py`：绘制边框、标签、风险原因和统计信息。
 - `poseguard/io/event_log.py`：去身份化事件记录。
@@ -84,7 +84,7 @@ PoseBackend(YOLO11n-pose)
 
 每帧姿态检测结果转换为统一的人体记录：`track_id`、框、置信度、17个关键点、关键点置信度、中心点和时间戳。轨迹匹配综合框中心距离、框面积变化和可用关键点距离；短暂漏检时保留轨迹若干帧，超过失联时间才删除。轨迹坐标使用指数平滑，避免检测框轻微抖动造成告警闪烁。
 
-### 5.2 贴耳通话
+### 5.2 疑似与他人通话
 
 候选条件同时满足：
 
@@ -94,7 +94,7 @@ PoseBackend(YOLO11n-pose)
 - 人体处于近似站立状态，排除明显躺坐姿；
 - 可选手机检测框位于耳部-手腕连线附近或与手部区域相交。
 
-候选状态先显示橙黄色。手机实物匹配成功，或在配置的连续确认窗口内姿态稳定成立，才升级为红色“疑似贴耳通话”。连续若干帧不满足条件后降级，采用独立的触发/解除阈值避免红黄快速跳变。
+候选状态先显示橙黄色。手机实物匹配成功，或在配置的连续确认窗口内姿态稳定成立，才升级为红色“疑似与他人通话”。连续若干帧不满足条件后降级，采用独立的触发/解除阈值避免红黄快速跳变。
 
 ### 5.3 多人风险
 

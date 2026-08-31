@@ -73,7 +73,7 @@ def test_event_log_contains_no_raw_frame_or_keypoints(tmp_path):
         track_id=7,
         kind=RiskKind.PHONE,
         state=RiskState.ALERT,
-        reason="疑似贴耳通话",
+        reason="疑似与他人通话",
         confidence=0.86,
         bbox=(1, 2, 30, 40),
         duration_seconds=1.2,
