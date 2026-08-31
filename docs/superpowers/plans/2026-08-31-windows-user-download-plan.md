@@ -223,7 +223,7 @@ Insert a `## 普通用户快速开始（Windows）` section containing this user
 Add these exact PowerShell commands below `### 手动安装与运行`:
 
 ```powershell
-py -3.11 -m venv .venv
+py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 New-Item -ItemType Directory -Force models | Out-Null

@@ -12,6 +12,68 @@ PoseGuard 是一个本地运行的多人姿态跟踪与疑似风险行为辅助�
 
 红色框只表示当前行为需要人工关注，不代表身份、违法事实或诈骗结论。PoseGuard 是辅助预警工具，最终判断应由现场人员结合实际情况作出。
 
+## 普通用户快速开始（Windows）
+
+### 运行条件
+
+- 64 位 Windows 10 或 Windows 11；
+- Python 3.11 或更高版本；
+- 内置摄像头或 USB 摄像头；
+- 首次初始化时需要联网安装依赖和获取模型。
+
+安装 Python 时请勾选 `Add Python to PATH`。
+
+### 1. 从 GitHub 下载
+
+正式发布包可在 [Releases](https://github.com/nanaoniiiii/Finance-Anti-fraud-visual-model/releases) 页面下载。若 Releases 页面暂时没有安装包，可返回仓库首页，点击绿色 `Code` 按钮，再选择 `Download ZIP` 下载当前源码。
+
+下载后解压 ZIP，进入包含 `README.md`、`setup_windows.bat` 和 `run_windows.bat` 的目录。普通用户不需要安装 Git。
+
+### 2. 首次初始化
+
+双击 `setup_windows.bat`。脚本会创建独立运行环境、安装依赖，并获取人体姿态与目标检测模型。根据网络和电脑性能，首次安装可能需要几分钟。
+
+看到“初始化完成”后即可关闭窗口。该步骤通常只需执行一次。
+
+### 3. 启动程序
+
+连接摄像头后双击 `run_windows.bat`。默认打开编号为 `0` 的摄像头。
+
+- 按 `p`：暂停或继续；
+- 按 `q` 或 `Esc`：退出。
+
+风险事件默认记录到 `runs/events.jsonl`，不会保存原始视频、图片、人脸或完整关键点。
+
+### 手动安装与运行
+
+如果希望查看详细输出或排查问题，可在项目目录打开 PowerShell，依次执行：
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+New-Item -ItemType Directory -Force models | Out-Null
+Push-Location models
+..\.venv\Scripts\python.exe -c "from ultralytics import YOLO; YOLO('yolo11n-pose.pt'); YOLO('yolo11n.pt')"
+Pop-Location
+.\.venv\Scripts\python.exe scripts\check_windows.py --source 0
+.\.venv\Scripts\python.exe -m poseguard.app --source 0 --config configs\windows.json
+```
+
+使用本地视频测试：
+
+```powershell
+.\.venv\Scripts\python.exe -m poseguard.app --source "C:\path\to\test.mp4" --config configs\windows.json
+```
+
+### 常见问题
+
+- 提示找不到 Python：安装 64 位 Python 3.11，并在安装器中勾选 `Add Python to PATH`。
+- 模型获取失败：确认网络可以正常下载模型，然后重新双击 `setup_windows.bat`。
+- 摄像头打不开：关闭微信、浏览器等占用摄像头的软件；若电脑有多个摄像头，手动命令中的 `--source 0` 可改为 `--source 1`。
+- 画面帧率较低：CPU 模式仍可运行，但速度通常低于 NVIDIA CUDA 环境；可以降低摄像头分辨率，或安装与显卡环境匹配的 PyTorch。
+- 环境或依赖损坏：删除 `.venv` 文件夹后重新运行 `setup_windows.bat`。
+
 ## 完整端侧处理闭环
 
 每个平台都可以独立完成从摄像头到告警的完整处理，不需要把图像上传给其他计算设备：
@@ -101,24 +163,18 @@ PoseGuard 不通过开发板型号白名单划分版本，而是根据操作系�
 
 “已部署测试”表示对应端侧链路已完成运行验证，不等同于覆盖所有场景的识别准确率认证，也不表示当前分支包含每一块设备的完整固件工程。
 
-## 家用计算机示例：Windows 运行
+## Windows 开发者验证
+
+完成上面的首次初始化后，可以使用虚拟环境执行摄像头检查和定量测试：
 
 ```powershell
-cd Finance-Anti-fraud-visual-model
-python -m pip install -r requirements.txt
-python -m poseguard.app --source 0 --config configs/windows.json
-```
-
-检查摄像头和运行环境：
-
-```powershell
-python scripts/check_windows.py --source 0
+.\.venv\Scripts\python.exe scripts\check_windows.py --source 0
 ```
 
 无窗口定量测试（处理 120 帧后自动退出）：
 
 ```powershell
-python -m poseguard.app --source 0 --config configs/windows.json --no-display --max-frames 120
+.\.venv\Scripts\python.exe -m poseguard.app --source 0 --config configs\windows.json --no-display --max-frames 120
 ```
 
 当前 Windows CPU 环境的实测过程、结果与尚未验证的边界见 `docs/windows-validation.md`。
@@ -128,7 +184,7 @@ python -m poseguard.app --source 0 --config configs/windows.json --no-display --
 视频文件测试：
 
 ```powershell
-python -m poseguard.app --source C:\path\to\test.mp4 --config configs/windows.json
+.\.venv\Scripts\python.exe -m poseguard.app --source "C:\path\to\test.mp4" --config configs\windows.json
 ```
 
 按 `p` 暂停/继续，按 `q` 或 ESC 退出。默认事件写入 `runs/events.jsonl`，不保存原始视频、图片、人脸或完整关键点。
