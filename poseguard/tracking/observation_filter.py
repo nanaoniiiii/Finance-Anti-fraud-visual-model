@@ -10,6 +10,11 @@ from poseguard.types import BBox, PersonObservation
 
 TORSO_KEYPOINT_INDICES = (5, 6, 11, 12)
 MINIMUM_SHARED_KEYPOINTS = 4
+CLOSE_UP_SHOULDER_INDICES = (5, 6)
+CLOSE_UP_ANKLE_INDICES = (15, 16)
+CLOSE_UP_MIN_CONFIDENCE = 0.75
+CLOSE_UP_MIN_VISIBLE_KEYPOINTS = 7
+CLOSE_UP_MIN_AREA_RATIO = 0.35
 
 
 def _bbox_size(bbox: BBox) -> tuple[float, float]:
@@ -106,8 +111,6 @@ class PoseObservationFilter:
         )
         if visible_count < self.min_visible_keypoints:
             return False
-        if torso_count < self.min_torso_keypoints:
-            return False
 
         x1, y1, x2, y2 = observation.bbox
         clipped_width = max(0.0, min(x2, frame_width) - max(x1, 0.0))
@@ -115,7 +118,25 @@ class PoseObservationFilter:
         clipped_area = clipped_width * clipped_height
         frame_area = float(frame_width * frame_height)
         clipped_area_ratio = clipped_area / frame_area
-        if not self.min_bbox_area_ratio <= clipped_area_ratio <= self.max_bbox_area_ratio:
+        close_upper_body = (
+            observation.confidence >= CLOSE_UP_MIN_CONFIDENCE
+            and visible_count
+            >= max(self.min_visible_keypoints, CLOSE_UP_MIN_VISIBLE_KEYPOINTS)
+            and clipped_area_ratio >= CLOSE_UP_MIN_AREA_RATIO
+            and all(
+                observation.keypoints[index] is not None
+                for index in CLOSE_UP_SHOULDER_INDICES
+            )
+            and all(
+                observation.keypoints[index] is None
+                for index in CLOSE_UP_ANKLE_INDICES
+            )
+        )
+        if torso_count < self.min_torso_keypoints and not close_upper_body:
+            return False
+        if clipped_area_ratio < self.min_bbox_area_ratio:
+            return False
+        if clipped_area_ratio > self.max_bbox_area_ratio and not close_upper_body:
             return False
 
         bbox_area = bbox_width * bbox_height

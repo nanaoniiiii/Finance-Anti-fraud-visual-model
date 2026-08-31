@@ -56,6 +56,19 @@ def test_valid_horizontal_side_pose_survives():
     assert PoseObservationFilter().filter((side_pose,), FRAME_SIZE) == (side_pose,)
 
 
+def test_high_confidence_close_upper_body_survives_without_visible_hips():
+    close_upper_body = _observation(
+        2,
+        (5.0, 0.0, 635.0, 475.0),
+        0.95,
+        tuple(range(11)),
+    )
+
+    assert PoseObservationFilter().filter(
+        (close_upper_body,), FRAME_SIZE
+    ) == (close_upper_body,)
+
+
 def test_overlapping_skeleton_equivalent_observations_keep_higher_quality():
     lower_quality = _observation(
         2,
