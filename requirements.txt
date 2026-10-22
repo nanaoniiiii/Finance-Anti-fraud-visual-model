@@ -1,6 +1,8 @@
+# PoseGuard Windows 运行依赖（版本锁定）。
+# 与 pyproject.toml 的 [project] dependencies 保持一致；
+# 运行测试套件的开发依赖见 requirements-dev.txt。
 numpy==2.4.6
 opencv-python==5.0.0.93
 pillow==12.2.0
-pytest==9.0.3
 torch==2.13.0
 ultralytics==8.4.103
