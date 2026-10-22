@@ -171,6 +171,13 @@ PoseGuard 不通过开发板型号白名单划分版本，而是根据操作系�
 .\.venv\Scripts\python.exe scripts\check_windows.py --source 0
 ```
 
+运行单元测试套件：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pytest
+```
+
 无窗口定量测试（处理 120 帧后自动退出）：
 
 ```powershell
