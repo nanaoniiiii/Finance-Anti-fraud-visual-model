@@ -101,13 +101,13 @@ def validate_config(config: Mapping[str, Any]) -> list[str]:
         "alert_release_seconds",
     ):
         value = risk.get(name)
-        if not isinstance(value, (int, float)) or value < 0:
-            errors.append(f"risk.{name} must be a non-negative number")
+        if not finite_real(value) or value < 0:
+            errors.append(f"risk.{name} must be a finite non-negative number")
 
     for name in ("pose_confidence", "phone_confidence"):
         value = models.get(name)
-        if not isinstance(value, (int, float)) or not 0 <= value <= 1:
-            errors.append(f"models.{name} must be between 0 and 1")
+        if not finite_real(value) or not 0 <= value <= 1:
+            errors.append(f"models.{name} must be a finite number between 0 and 1")
 
     for name, maximum in (
         ("min_visible_keypoints", 17),
@@ -165,12 +165,12 @@ def validate_config(config: Mapping[str, Any]) -> list[str]:
         errors.append("models.phone_path is required when phone detection is enabled")
 
     confidence = tracking.get("minimum_confidence")
-    if not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
-        errors.append("tracking.minimum_confidence must be between 0 and 1")
+    if not finite_real(confidence) or not 0 <= confidence <= 1:
+        errors.append("tracking.minimum_confidence must be a finite number between 0 and 1")
 
     alpha = tracking.get("smoothing_alpha")
-    if not isinstance(alpha, (int, float)) or not 0 < alpha <= 1:
-        errors.append("tracking.smoothing_alpha must be within (0, 1]")
+    if not finite_real(alpha) or not 0 < alpha <= 1:
+        errors.append("tracking.smoothing_alpha must be a finite number within (0, 1]")
     missing_frames = tracking.get("max_missing_frames")
     if not isinstance(missing_frames, int) or missing_frames < 0:
         errors.append("tracking.max_missing_frames must be a non-negative integer")
@@ -178,16 +178,16 @@ def validate_config(config: Mapping[str, Any]) -> list[str]:
     if not finite_real(missing_seconds) or missing_seconds < 0:
         errors.append("tracking.max_missing_seconds must be a finite non-negative number")
     maximum_cost = tracking.get("maximum_match_cost")
-    if not isinstance(maximum_cost, (int, float)) or maximum_cost <= 0:
-        errors.append("tracking.maximum_match_cost must be positive")
+    if not finite_real(maximum_cost) or maximum_cost <= 0:
+        errors.append("tracking.maximum_match_cost must be a finite positive number")
     min_confirmed_hits = tracking.get("min_confirmed_hits")
     if type(min_confirmed_hits) is not int or min_confirmed_hits < 1:
         errors.append("tracking.min_confirmed_hits must be a positive integer")
 
     for name in ("wrist_ear_ratio", "nearby_body_ratio"):
         value = risk.get(name)
-        if not isinstance(value, (int, float)) or value <= 0:
-            errors.append(f"risk.{name} must be positive")
+        if not finite_real(value) or value <= 0:
+            errors.append(f"risk.{name} must be a finite positive number")
     for name in (
         "lingering_max_speed_ratio",
         "lingering_max_pose_motion_ratio",
