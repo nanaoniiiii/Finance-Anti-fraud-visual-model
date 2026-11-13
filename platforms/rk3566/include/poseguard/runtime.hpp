@@ -15,10 +15,13 @@ struct RuntimeConfig {
   std::string video_path{};
   std::string preferred_device{};
   std::string events_path{"/userdata/poseguard/runs/events.jsonl"};
+  std::string debug_trace_path{};
   int http_port{8081};
   int max_frames{};
   bool benchmark{};
   bool http_enabled{true};
+  bool display_enabled{false};
+  bool loop_video{false};
   CoreConfig core{};
 };
 

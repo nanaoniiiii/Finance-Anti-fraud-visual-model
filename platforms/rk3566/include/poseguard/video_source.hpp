@@ -43,6 +43,7 @@ class VideoSource {
   VideoSource& operator=(const VideoSource&) = delete;
 
   bool read(Frame& frame, int timeout_ms = 1000);
+  bool restart_file();
   bool waiting_for_camera() const;
   bool end_of_stream() const;
   const std::string& active_device() const;

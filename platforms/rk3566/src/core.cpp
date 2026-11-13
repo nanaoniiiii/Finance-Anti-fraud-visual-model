@@ -115,10 +115,15 @@ std::vector<PoseObservation> PoseCore::filter_and_deduplicate(
     }
     const float area_ratio =
         frame_area > 0.0F ? box_area(observation.bbox) / frame_area : 0.0F;
+    const bool close_upper_body = observation.confidence >= 0.75F &&
+        valid_count >= std::max(config_.minimum_valid_keypoints, 7) &&
+        area_ratio >= 0.35F && observation.keypoints[5].valid &&
+        observation.keypoints[6].valid && !observation.keypoints[15].valid &&
+        !observation.keypoints[16].valid;
     if (valid_count < config_.minimum_valid_keypoints ||
-        torso_count < config_.minimum_torso_keypoints ||
+        (torso_count < config_.minimum_torso_keypoints && !close_upper_body) ||
         area_ratio < config_.minimum_bbox_area_ratio ||
-        area_ratio > config_.maximum_bbox_area_ratio) {
+        (area_ratio > config_.maximum_bbox_area_ratio && !close_upper_body)) {
       continue;
     }
     candidates.push_back(observation);
@@ -327,46 +332,53 @@ RiskState PoseCore::update_evidence(EvidenceMemory& memory, bool condition,
   }
 
   memory.has_last_evidence = false;
-  memory.active_seconds = 0.0;
   if (memory.state == RiskState::Alert &&
       timestamp - memory.last_positive_seconds <=
           config_.alert_release_seconds) {
     return RiskState::Alert;
   }
+  memory.active_seconds = 0.0;
   memory.state = RiskState::Normal;
   return memory.state;
 }
 
 bool PoseCore::is_phone_to_ear(const TrackState& track) const {
   const float height = box_height(track.bbox);
-  const float width = box_width(track.bbox);
-  if (height <= 0.0F || height < width * 1.35F) {
+  if (height <= 0.0F) {
     return false;
   }
 
-  const auto side_matches = [&](std::size_t ear, std::size_t shoulder,
+  const auto side_matches = [&](std::size_t ear, std::size_t eye, std::size_t shoulder,
                                 std::size_t elbow, std::size_t wrist,
-                                std::size_t hip, std::size_t ankle) {
-    const auto& ear_point = track.keypoints[ear];
+                                std::size_t hip) {
+    const auto& ear_point = track.keypoints[ear].valid ? track.keypoints[ear]
+        : track.keypoints[eye].valid ? track.keypoints[eye] : track.keypoints[0];
     const auto& shoulder_point = track.keypoints[shoulder];
     const auto& elbow_point = track.keypoints[elbow];
     const auto& wrist_point = track.keypoints[wrist];
     const auto& hip_point = track.keypoints[hip];
-    const auto& ankle_point = track.keypoints[ankle];
-    if (!ear_point.valid || !shoulder_point.valid || !elbow_point.valid ||
-        !wrist_point.valid || !hip_point.valid || !ankle_point.valid) {
+    if (!ear_point.valid || !shoulder_point.valid ||
+        !wrist_point.valid) {
       return false;
     }
-    const bool upright = shoulder_point.y < hip_point.y &&
-                         hip_point.y < ankle_point.y;
+    const bool upright = ear_point.y < shoulder_point.y &&
+                         (!hip_point.valid || shoulder_point.y < hip_point.y);
+    const bool arm_raised = wrist_point.y <= shoulder_point.y + height * 0.08F &&
+        (!elbow_point.valid || wrist_point.y <= elbow_point.y + height * 0.06F);
+    const float shoulder_width = track.keypoints[5].valid && track.keypoints[6].valid
+        ? point_distance({track.keypoints[5].x, track.keypoints[5].y},
+                         {track.keypoints[6].x, track.keypoints[6].y})
+        : box_width(track.bbox) * 0.5F;
+    const bool near_head_horizontally = std::abs(wrist_point.x - ear_point.x) <=
+        std::max(shoulder_width * 0.85F, box_width(track.bbox) * 0.25F);
     const float wrist_to_ear =
         std::hypot(wrist_point.x - ear_point.x, wrist_point.y - ear_point.y);
-    return upright &&
+    return upright && arm_raised && near_head_horizontally &&
            wrist_to_ear <= height * config_.phone_wrist_ear_height_ratio;
   };
 
-  return side_matches(3, 5, 7, 9, 11, 15) ||
-         side_matches(4, 6, 8, 10, 12, 16);
+  return side_matches(3, 1, 5, 7, 9, 11) ||
+         side_matches(4, 2, 6, 8, 10, 12);
 }
 
 std::vector<RiskDecision> PoseCore::evaluate(

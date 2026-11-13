@@ -318,7 +318,6 @@ std::vector<PoseObservation> RknnPoseEngine::infer(const Frame& frame,
   const auto finished = std::chrono::steady_clock::now();
   metrics.inference_ms =
       std::chrono::duration<double, std::milli>(finished - started).count();
-  ++metrics.frame_index;
   return decode_pose(decoded, impl_->shape, transform, impl_->score_threshold,
                      impl_->keypoint_threshold, impl_->nms_threshold);
 }

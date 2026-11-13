@@ -278,7 +278,7 @@ struct VideoSource::Impl {
   bool open_file() {
     const std::string suffix =
         " ! videoconvert ! video/x-raw,format=RGB ! appsink "
-        "name=poseguard_sink emit-signals=false max-buffers=1 drop=true "
+        "name=poseguard_sink emit-signals=false max-buffers=1 drop=false "
         "sync=false";
     const std::string location = quote_pipeline_value(config.path);
     if (launch("filesrc location=" + location +
@@ -454,6 +454,17 @@ bool VideoSource::read(Frame& frame, int timeout_ms) {
   static_cast<void>(frame);
   static_cast<void>(timeout_ms);
   impl_->error = "GStreamer support is not enabled";
+  return false;
+#endif
+}
+
+bool VideoSource::restart_file() {
+#if defined(POSEGUARD_WITH_GSTREAMER)
+  if (impl_->config.kind != VideoSourceKind::File) return false;
+  impl_->release_pipeline();
+  impl_->eos = false;
+  return impl_->open_file();
+#else
   return false;
 #endif
 }

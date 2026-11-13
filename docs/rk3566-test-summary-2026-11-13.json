@@ -1,0 +1,100 @@
+{
+  "date": "2026-11-13",
+  "board": {
+    "model": "LCKFB TaishanPi RK3566",
+    "architecture": "aarch64",
+    "kernel": "4.19.232",
+    "npu_driver": "0.7.2",
+    "rknn_runtime": "2.3.2",
+    "memory_kib": 2019804,
+    "display": "DSI, 480x800, Weston/Wayland"
+  },
+  "binary_sha256": "d329e0139b0ba331475eb1d2befda732ec4a40b64a0f37867cb97e029e75ee90",
+  "binary_bytes": 247072,
+  "model_sha256": "e06023208f6972615ff6c344f3d4f65fd5f620b472ed1f7800a38b8cfc5c9df0",
+  "model_bytes": 4400840,
+  "configuration": {
+    "multi_person_alert_seconds": 0.6,
+    "phone_alert_seconds": 1.0,
+    "lingering_alert_seconds": 20.0,
+    "alert_release_seconds": 0.8
+  },
+  "results": {
+    "sample_1": {
+      "frames": 1318,
+      "benchmark": {
+        "frames": 1318,
+        "max_tracks": 2,
+        "avg_inference_ms": 29.46,
+        "fps": 17.64,
+        "peak_rss_kb": 33992,
+        "detection_frames": 958,
+        "observed_track_frames": 948,
+        "display_rendered": 1318
+      },
+      "raw_detection_frames": 958,
+      "before_observed_track_frames": 280,
+      "after_observed_track_frames": 948,
+      "visible_window": {
+        "from_seconds": 14,
+        "to_seconds": 30,
+        "frames": 480,
+        "fresh_track_frames": 476,
+        "displayed_confirmed_track_frames": 480,
+        "track_ids": [
+          3
+        ]
+      },
+      "multi_person_alert_intervals": [
+        [
+          0.8667,
+          2.3667
+        ]
+      ],
+      "phone_alert_intervals": [],
+      "lingering_alert_intervals": [],
+      "red_alert_frames_in_visible_window": 0
+    },
+    "sample_2": {
+      "frames": 693,
+      "benchmark": {
+        "frames": 693,
+        "max_tracks": 1,
+        "avg_inference_ms": 27.22,
+        "fps": 19.15,
+        "peak_rss_kb": 34476,
+        "detection_frames": 436,
+        "observed_track_frames": 432,
+        "display_rendered": 693
+      },
+      "raw_detection_frames": 436,
+      "before_observed_track_frames": 120,
+      "after_observed_track_frames": 432,
+      "visible_window": {
+        "from_seconds": 14,
+        "to_seconds": 20,
+        "frames": 180,
+        "fresh_track_frames": 180,
+        "displayed_confirmed_track_frames": 180,
+        "track_ids": [
+          2
+        ]
+      },
+      "multi_person_alert_intervals": [],
+      "phone_alert_intervals": [
+        [
+          13.6333,
+          21.9667
+        ]
+      ],
+      "lingering_alert_intervals": [],
+      "red_alert_frames_in_visible_window": 180
+    }
+  },
+  "limitations": [
+    "Functional regression on two supplied clips, not a representative accuracy study.",
+    "Phone alerts are pose-based; no independent phone-object confirmation model.",
+    "No camera was connected; UVC capture and hot-plug were not tested.",
+    "Lingering state logic has native tests, but no separately annotated prolonged-stay video."
+  ]
+}

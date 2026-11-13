@@ -43,6 +43,13 @@ int main() {
                          ("poseguard-runtime-" + std::to_string(nonce));
   std::filesystem::create_directories(directory);
   const auto event_path = directory / "events.jsonl";
+  const auto config_path = directory / "runtime.conf";
+  {
+    std::ofstream config_stream(config_path);
+    config_stream << "display_enabled=true\nloop_video=yes\nhttp_enabled=false\n";
+  }
+  const auto config = poseguard::load_runtime_config(config_path.string());
+  CHECK(config.display_enabled && config.loop_video && !config.http_enabled);
   {
     poseguard::EventJournal journal(event_path.string());
     auto candidate = alert;

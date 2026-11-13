@@ -201,16 +201,26 @@ def compare_models(
                 "rknn_peak_score": peak_score(candidate_output),
                 "bbox_iou": 0.0,
                 "keypoint_error_ratio": None,
+                "keypoint_confidence_mae": None,
+                "visible_keypoint_recall": None,
                 "passed": False,
             }
             if reference and candidate:
                 overlap, keypoint_error = compare_person(reference[0], candidate[0])
                 result["bbox_iou"] = overlap
                 result["keypoint_error_ratio"] = keypoint_error
+                reference_scores = reference[0]["keypoints"][:, 2]
+                candidate_scores = candidate[0]["keypoints"][:, 2]
+                result["keypoint_confidence_mae"] = float(np.abs(reference_scores - candidate_scores).mean())
+                reference_visible = reference_scores >= 0.25
+                result["visible_keypoint_recall"] = float(
+                    ((candidate_scores >= 0.25) & reference_visible).sum() / max(1, reference_visible.sum())
+                )
                 result["passed"] = (
                     len(reference) == len(candidate)
                     and overlap >= 0.70
                     and keypoint_error <= 0.07
+                    and result["visible_keypoint_recall"] >= 0.80
                 )
             frames.append(result)
     finally:

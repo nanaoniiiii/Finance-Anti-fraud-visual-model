@@ -172,6 +172,57 @@ bool test_motion_resets_lingering() {
   return true;
 }
 
+bool test_close_up_tracking_and_phone() {
+  PoseCore core{};
+  auto full = standing_person(320.0F, true);
+  auto tracks = confirm(core, {full});
+  CHECK(tracks.size() == 1U);
+  const int id = tracks.front().track_id;
+  auto close = full;
+  close.bbox = {5.0F, 5.0F, 635.0F, 479.0F};
+  for (std::size_t index = 11; index < 17; ++index) close.keypoints[index].valid = false;
+  tracks = core.update_tracks({close}, 0.20);
+  CHECK(tracks.size() == 1U && tracks.front().track_id == id && !tracks.front().predicted);
+  core.evaluate(tracks, kWidth, kHeight, 0.20);
+  tracks = core.update_tracks({close}, 1.40);
+  const auto decisions = core.evaluate(tracks, kWidth, kHeight, 1.40);
+  CHECK(tracks.size() == 1U && tracks.front().track_id == id);
+  CHECK(state_for(decisions, RiskKind::PhoneToEar) == RiskState::Alert);
+
+  PoseCore low_quality{};
+  close.confidence = 0.40F;
+  CHECK(low_quality.update_tracks({close}, 0.0).empty());
+  return true;
+}
+
+bool test_normal_hands_and_raised_arms_not_phone() {
+  for (float movement : {0.0F, 18.0F}) {
+    PoseCore core{};
+    auto person = standing_person(320.0F, false, movement);
+    const auto tracks = confirm(core, {person});
+    const auto decisions = core.evaluate(tracks, kWidth, kHeight, 0.10);
+    CHECK(state_for(decisions, RiskKind::PhoneToEar) == RiskState::Normal);
+  }
+  return true;
+}
+
+bool test_confirmed_alert_survives_brief_negative() {
+  PoseCore core{};
+  const auto phone = standing_person(320.0F, true);
+  const auto normal = standing_person(320.0F);
+  auto tracks = confirm(core, {phone});
+  core.evaluate(tracks, kWidth, kHeight, 0.10);
+  tracks = core.update_tracks({phone}, 1.20);
+  CHECK(state_for(core.evaluate(tracks, kWidth, kHeight, 1.20), RiskKind::PhoneToEar) == RiskState::Alert);
+  tracks = core.update_tracks({normal}, 1.30);
+  CHECK(state_for(core.evaluate(tracks, kWidth, kHeight, 1.30), RiskKind::PhoneToEar) == RiskState::Alert);
+  tracks = core.update_tracks({phone}, 1.40);
+  CHECK(state_for(core.evaluate(tracks, kWidth, kHeight, 1.40), RiskKind::PhoneToEar) == RiskState::Alert);
+  tracks = core.update_tracks({normal}, 2.50);
+  CHECK(state_for(core.evaluate(tracks, kWidth, kHeight, 2.50), RiskKind::PhoneToEar) == RiskState::Normal);
+  return true;
+}
+
 bool test_short_dropout_keeps_track() {
   PoseCore core{};
   auto tracks = confirm(core, {standing_person(300.0F)});
@@ -194,7 +245,9 @@ bool test_short_dropout_keeps_track() {
 
 int main() {
   if (!test_phone_to_ear() || !test_multi_person() || !test_lingering() ||
-      !test_motion_resets_lingering() || !test_short_dropout_keeps_track()) {
+      !test_motion_resets_lingering() || !test_short_dropout_keeps_track() ||
+      !test_close_up_tracking_and_phone() || !test_normal_hands_and_raised_arms_not_phone() ||
+      !test_confirmed_alert_survives_brief_negative()) {
     return 1;
   }
   std::cout << "core-risk-ok\n";

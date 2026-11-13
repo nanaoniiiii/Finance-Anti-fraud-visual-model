@@ -117,15 +117,26 @@ def split_pose_output_scales(
 
     anchors = int(contract["anchors"])
     boxes_input, scores_input, keypoints_input = producer.input
-    score_indices_name = "poseguard_keypoint_score_indices"
-    graph.initializer.append(
-        helper.make_tensor(
-            score_indices_name,
-            TensorProto.INT64,
-            [POSE_KEYPOINTS],
-            [2 + point * 3 for point in range(POSE_KEYPOINTS)],
-        )
-    )
+    nodes = {output: node for node in graph.node for output in node.output}
+    packed = nodes.get(keypoints_input)
+    decoded = nodes.get(packed.input[0]) if packed is not None and packed.op_type == "Reshape" else None
+    if decoded is None or decoded.op_type != "Concat" or len(decoded.input) != 2:
+        raise ValueError("expected decoded keypoints Reshape(Concat(xy, sigmoid_scores))")
+    decoded_axis = next((helper.get_attribute_value(a) for a in decoded.attribute if a.name == "axis"), None)
+    confidence_input = decoded.input[1]
+    confidence_node = nodes.get(confidence_input)
+    if decoded_axis != 2 or confidence_node is None or confidence_node.op_type != "Sigmoid":
+        raise ValueError("keypoint confidence must be tapped before coordinate concatenation")
+    # A Gather AFTER the mixed coordinate/confidence Concat has already lost
+    # confidence precision to the coordinate INT8 range. Keep that Concat
+    # coordinate-only and expose the original sigmoid on its own branch.
+    zero_name = "poseguard_unused_keypoint_confidence"
+    score_shape_name = "poseguard_keypoint_confidence_shape"
+    graph.initializer.extend([
+        helper.make_tensor(zero_name, TensorProto.FLOAT, [1, 17, 1, anchors], [0.0] * (17 * anchors)),
+        helper.make_tensor(score_shape_name, TensorProto.INT64, [3], [1, 17, anchors]),
+    ])
+    decoded.input[1] = zero_name
     graph.node.extend(
         [
             helper.make_node("Identity", [boxes_input], [SPLIT_OUTPUT_NAMES[0]]),
@@ -134,10 +145,9 @@ def split_pose_output_scales(
                 "Identity", [keypoints_input], [SPLIT_OUTPUT_NAMES[2]]
             ),
             helper.make_node(
-                "Gather",
-                [keypoints_input, score_indices_name],
+                "Reshape",
+                [confidence_input, score_shape_name],
                 [SPLIT_OUTPUT_NAMES[3]],
-                axis=1,
             ),
         ]
     )

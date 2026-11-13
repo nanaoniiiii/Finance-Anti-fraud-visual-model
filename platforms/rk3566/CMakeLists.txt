@@ -4,6 +4,7 @@ project(poseguard_rk3566 LANGUAGES CXX)
 
 option(POSEGUARD_BUILD_TESTS "Build host-side tests" OFF)
 option(POSEGUARD_ENABLE_BOARD "Build the RK3566 executable" ON)
+set(POSEGUARD_BOARD_SYSROOT "" CACHE PATH "Board rootfs containing target shared libraries")
 
 add_library(poseguard_core OBJECT src/core.cpp src/rknn_pose.cpp)
 target_include_directories(
@@ -20,10 +21,13 @@ if(POSEGUARD_ENABLE_BOARD)
   pkg_check_modules(
     GSTREAMER
     REQUIRED
-    IMPORTED_TARGET
     gstreamer-1.0
     gstreamer-app-1.0
   )
+  if(POSEGUARD_BOARD_SYSROOT AND CMAKE_CROSSCOMPILING)
+    # Do not let pkg-config's host libc headers shadow the cross libc headers.
+    list(FILTER GSTREAMER_INCLUDE_DIRS EXCLUDE REGEX "^/usr/include/(x86_64|i386)-linux-gnu$")
+  endif()
   find_path(
     RKNN_INCLUDE_DIR
     rknn_api.h
@@ -46,11 +50,37 @@ if(POSEGUARD_ENABLE_BOARD)
     src/rknn_engine.cpp
     src/runtime.cpp
     src/video_source.cpp
+    src/display_sink.cpp
   )
   target_link_libraries(poseguard-rk3566 PRIVATE poseguard_core)
   target_link_libraries(poseguard-rk3566 PRIVATE ${RKNN_RUNTIME_LIBRARY})
-  target_link_libraries(poseguard-rk3566 PRIVATE PkgConfig::GSTREAMER)
-  target_link_libraries(poseguard-rk3566 PRIVATE Threads::Threads)
+  target_include_directories(poseguard-rk3566 PRIVATE ${GSTREAMER_INCLUDE_DIRS})
+  target_compile_options(poseguard-rk3566 PRIVATE ${GSTREAMER_CFLAGS_OTHER})
+  if(POSEGUARD_BOARD_SYSROOT)
+    # Buildroot often has no development headers. Use the build host's ABI
+    # compatible GStreamer headers, but link only against the target libraries.
+    foreach(name gstapp-1.0 gstbase-1.0 gstreamer-1.0 gobject-2.0 glib-2.0)
+      string(MAKE_C_IDENTIFIER "${name}" library_id)
+      find_library(BOARD_${library_id} NAMES ${name}
+        PATHS "${POSEGUARD_BOARD_SYSROOT}/usr/lib" NO_DEFAULT_PATH REQUIRED)
+      target_link_libraries(poseguard-rk3566 PRIVATE ${BOARD_${library_id}})
+    endforeach()
+    target_link_libraries(poseguard-rk3566 PRIVATE
+      "${POSEGUARD_BOARD_SYSROOT}/lib/libc.so.6"
+      "${POSEGUARD_BOARD_SYSROOT}/lib/libdl.so.2"
+      "${POSEGUARD_BOARD_SYSROOT}/lib/libm.so.6"
+      "${POSEGUARD_BOARD_SYSROOT}/lib/libpthread.so.0"
+      "${POSEGUARD_BOARD_SYSROOT}/lib/ld-linux-aarch64.so.1")
+    target_link_options(poseguard-rk3566 PRIVATE
+      "-Wl,-rpath-link,${POSEGUARD_BOARD_SYSROOT}/usr/lib"
+      "-Wl,-rpath-link,${POSEGUARD_BOARD_SYSROOT}/lib")
+  else()
+    target_link_directories(poseguard-rk3566 PRIVATE ${GSTREAMER_LIBRARY_DIRS})
+    target_link_libraries(poseguard-rk3566 PRIVATE ${GSTREAMER_LIBRARIES})
+    target_link_libraries(poseguard-rk3566 PRIVATE Threads::Threads)
+  endif()
+  set_target_properties(poseguard-rk3566 PROPERTIES
+    BUILD_WITH_INSTALL_RPATH TRUE INSTALL_RPATH "$ORIGIN/../lib")
   target_include_directories(poseguard-rk3566 PRIVATE ${RKNN_INCLUDE_DIR})
   target_compile_definitions(
     poseguard-rk3566

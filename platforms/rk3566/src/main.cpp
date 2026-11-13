@@ -11,7 +11,7 @@
 #endif
 
 namespace {
-constexpr std::string_view kVersion = "0.1.0";
+constexpr std::string_view kVersion = "1.1.0";
 
 int parse_max_frames(int argc, char* argv[], int fallback) {
   for (int index = 1; index + 1 < argc; ++index) {
@@ -63,7 +63,8 @@ void print_usage() {
       << "  poseguard-rk3566 --input-smoke VIDEO [--max-frames N]\n"
       << "  poseguard-rk3566 --config FILE [--source camera|video] "
          "[--video FILE] [--device /dev/videoN] [--model FILE] "
-         "[--benchmark] [--max-frames N] [--no-http]\n";
+         "[--benchmark] [--max-frames N] [--no-http] "
+         "[--display|--no-display] [--loop-video] [--debug-trace FILE]\n";
 }
 
 poseguard::RuntimeConfig parse_runtime_config(int argc, char* argv[]) {
@@ -102,6 +103,14 @@ poseguard::RuntimeConfig parse_runtime_config(int argc, char* argv[]) {
       config.benchmark = true;
     } else if (option == "--no-http") {
       config.http_enabled = false;
+    } else if (option == "--display") {
+      config.display_enabled = true;
+    } else if (option == "--no-display") {
+      config.display_enabled = false;
+    } else if (option == "--loop-video") {
+      config.loop_video = true;
+    } else if (option == "--debug-trace") {
+      config.debug_trace_path = require_value();
     } else {
       throw std::invalid_argument("unknown option: " + std::string(option));
     }

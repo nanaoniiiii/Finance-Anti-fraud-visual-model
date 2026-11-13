@@ -22,7 +22,7 @@ struct CoreConfig {
   float smoothing_alpha{0.55F};
   int confirmation_frames{3};
   double missing_track_seconds{1.5};
-  float phone_wrist_ear_height_ratio{0.13F};
+  float phone_wrist_ear_height_ratio{0.36F};
   double phone_alert_seconds{1.0};
   double multi_person_alert_seconds{1.5};
   float lingering_center_speed_ratio{0.12F};

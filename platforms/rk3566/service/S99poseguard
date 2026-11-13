@@ -1,12 +1,16 @@
 #!/bin/sh
 
 DAEMON=/userdata/poseguard/bin/poseguard-rk3566
+RUNNER=/userdata/poseguard/bin/poseguard-run
 CONFIG=/userdata/poseguard/config/poseguard.conf
 PIDFILE=/var/run/poseguard.pid
 LOGFILE=/userdata/poseguard/logs/poseguard.log
 
 is_running() {
-    [ -s "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
+    [ -s "$PIDFILE" ] || return 1
+    pid=$(cat "$PIDFILE")
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    kill -0 "$pid" 2>/dev/null && [ "$(readlink "/proc/$pid/exe")" = "$DAEMON" ]
 }
 
 start_service() {
@@ -16,22 +20,32 @@ start_service() {
         return 0
     fi
     rm -f "$PIDFILE"
-    if [ ! -x "$DAEMON" ]; then
+    if [ ! -x "$DAEMON" ] || [ ! -x "$RUNNER" ]; then
         echo "PoseGuard executable missing: $DAEMON"
         return 1
     fi
-    start-stop-daemon -S -b -m -p "$PIDFILE" -O "$LOGFILE" \
-        -x "$DAEMON" -- --config "$CONFIG"
-    echo "PoseGuard started"
+    # BusyBox builds do not all implement start-stop-daemon -O.
+    nohup "$RUNNER" --config "$CONFIG" >>"$LOGFILE" 2>&1 </dev/null &
+    echo "$!" > "$PIDFILE"
+    sleep 1
+    if ! is_running; then
+        echo "PoseGuard failed to start; see $LOGFILE"
+        return 1
+    fi
+    echo "PoseGuard started (pid $(cat "$PIDFILE"))"
 }
 
 stop_service() {
     if is_running; then
-        start-stop-daemon -K -p "$PIDFILE"
+        kill "$(cat "$PIDFILE")" || return 1
         for delay in 1 2 3 4 5; do
             is_running || break
             sleep 1
         done
+    fi
+    if is_running; then
+        echo "PoseGuard has not stopped; keeping its pidfile"
+        return 1
     fi
     rm -f "$PIDFILE"
     echo "PoseGuard stopped"
@@ -45,7 +59,7 @@ case "$1" in
         stop_service
         ;;
     restart)
-        stop_service
+        stop_service || exit 1
         start_service
         ;;
     status)

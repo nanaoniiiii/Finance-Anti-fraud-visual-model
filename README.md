@@ -217,6 +217,8 @@ python main.py --test-timers
 
 泰山派版本使用 USB 摄像头、RKNN INT8 与板端 GStreamer/MPP，独立完成人体姿态推理、稳定 ID、三类风险和网页告警。构建、部署、开机启动及摄像头热插拔说明见 `platforms/rk3566/README.md`。
 
+2026-11-13 轻量版增加 USB ADB 离线安装、私有 RKNN Runtime、BusyBox 兼容开机服务、480×800 MIPI 全屏显示和视频循环。修复量化关键点置信度被坐标数值范围压缩、近距离上半身掉踪、重复累计帧数和告警抖动问题。已在 Linux 4.19 / NPU 驱动 0.7.2 的泰山派上使用两段实际视频验证多人、疑似通话、正常操作与跟踪，并完成并发流和真实重启测试。可从同仓库 Releases 下载 `PoseGuard-RK3566-v1.1.0-aarch64.tar.gz`，详见 [`platforms/rk3566/README.md`](platforms/rk3566/README.md) 和 [`docs/rk3566-validation-2026-11-13.md`](docs/rk3566-validation-2026-11-13.md)。
+
 ```powershell
 & platforms/rk3566/build.ps1 -Target All
 & platforms/rk3566/deploy.ps1

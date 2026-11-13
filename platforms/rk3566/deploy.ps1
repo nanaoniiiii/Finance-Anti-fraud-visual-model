@@ -6,6 +6,7 @@ param(
     [string]$ModelPath = "",
     [string]$VideoPath = "",
     [string]$ConfigPath = "",
+    [string]$RuntimePath = "",
     [switch]$SkipService
 )
 
@@ -28,14 +29,18 @@ if (-not $ConfigPath) {
     $ConfigPath = Join-Path $PSScriptRoot "config\poseguard.conf"
 }
 $servicePath = Join-Path $PSScriptRoot "service\S99poseguard"
+$runnerPath = Join-Path $PSScriptRoot "service\poseguard-run"
 
-foreach ($path in @($IdentityFile, $BinaryPath, $ModelPath, $VideoPath, $ConfigPath, $servicePath)) {
+foreach ($path in @($IdentityFile, $BinaryPath, $ModelPath, $VideoPath, $ConfigPath, $servicePath, $runnerPath)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Required deployment file not found: $path"
     }
 }
 
 $target = "${User}@${BoardHost}"
+if ($RuntimePath -and -not (Test-Path -LiteralPath $RuntimePath -PathType Leaf)) {
+    throw "Runtime library not found: $RuntimePath"
+}
 $sshBase = @("-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-i", $IdentityFile)
 $remoteRoot = "/userdata/poseguard"
 
@@ -64,9 +69,16 @@ function Install-Atomic([string]$localPath, [string]$remotePath, [string]$mode) 
     Write-Host "[deploy] $remotePath  sha256=$localHash"
 }
 
-Invoke-Ssh "mkdir -p '$remoteRoot/bin' '$remoteRoot/models' '$remoteRoot/config' '$remoteRoot/media' '$remoteRoot/runs' '$remoteRoot/logs' '$remoteRoot/service' '$remoteRoot/backup'; rm -rf '$remoteRoot/backup/previous'; mkdir -p '$remoteRoot/backup/previous'"
+Invoke-Ssh "mkdir -p '$remoteRoot/bin' '$remoteRoot/lib' '$remoteRoot/models' '$remoteRoot/config' '$remoteRoot/media' '$remoteRoot/runs' '$remoteRoot/logs' '$remoteRoot/service' '$remoteRoot/backup'; rm -rf '$remoteRoot/backup/previous'; mkdir -p '$remoteRoot/backup/previous'"
 
+if (-not $SkipService) {
+    Invoke-Ssh "if [ -x /etc/init.d/S99poseguard ]; then /etc/init.d/S99poseguard stop; fi"
+}
 Install-Atomic $BinaryPath "$remoteRoot/bin/poseguard-rk3566" "0755"
+Install-Atomic $runnerPath "$remoteRoot/bin/poseguard-run" "0755"
+if ($RuntimePath) {
+    Install-Atomic $RuntimePath "$remoteRoot/lib/librknnrt.so" "0644"
+}
 Install-Atomic $ModelPath "$remoteRoot/models/poseguard-yolo11n-pose-320-int8.rknn" "0644"
 Install-Atomic $ConfigPath "$remoteRoot/config/poseguard.conf" "0644"
 Install-Atomic $VideoPath "$remoteRoot/media/yoga-regression.mp4" "0644"

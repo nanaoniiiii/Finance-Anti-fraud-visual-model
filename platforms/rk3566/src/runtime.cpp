@@ -27,6 +27,7 @@
 #include <utility>
 
 #if defined(POSEGUARD_WITH_GSTREAMER)
+#include "poseguard/display_sink.hpp"
 #include <gst/app/gstappsink.h>
 #include <gst/app/gstappsrc.h>
 #include <gst/gst.h>
@@ -292,6 +293,8 @@ RuntimeConfig load_runtime_config(const std::string& path) {
     else if (key == "events") config.events_path = value;
     else if (key == "http_port") config.http_port = std::stoi(value);
     else if (key == "http_enabled") config.http_enabled = parse_bool(value);
+    else if (key == "display_enabled") config.display_enabled = parse_bool(value);
+    else if (key == "loop_video") config.loop_video = parse_bool(value);
     else if (key == "phone_alert_seconds")
       config.core.phone_alert_seconds = std::stod(value);
     else if (key == "multi_person_alert_seconds")
@@ -382,9 +385,14 @@ Frame draw_overlay(const Frame& frame, const std::vector<TrackState>& tracks,
     if (risk != RiskKind::None) {
       label += " " + std::string(short_risk_name(risk));
     }
-    const int text_y = std::max(2, static_cast<int>(track.bbox.y1) - 9);
-    draw_text(canvas, std::max(2, static_cast<int>(track.bbox.x1)), text_y,
-              label, color);
+    const int text_y = std::max(18, static_cast<int>(track.bbox.y1) - 9);
+    const int text_x = std::max(3, static_cast<int>(track.bbox.x1) + 3);
+    for (int y = text_y - 1; y <= text_y + 7; ++y) {
+      for (int x = text_x - 1; x <= text_x + static_cast<int>(label.size()) * 6; ++x) {
+        set_pixel(canvas, x, y, {0, 0, 0});
+      }
+    }
+    draw_text(canvas, text_x, text_y, label, color);
   }
 
   draw_text(canvas, 5, 5, "FPS " + format_decimal(metrics.fps),
@@ -534,6 +542,54 @@ std::string status_json(const std::string& input_state,
          << ",\"processing_ms\":" << metrics.processing_ms
          << ",\"last_error\":\"" << json_escape(error) << "\"}";
   return stream.str();
+}
+
+void write_debug_trace(std::ostream& stream, const Frame& frame,
+                       const std::vector<PoseObservation>& observations,
+                       const std::vector<TrackState>& tracks,
+                       const std::vector<RiskDecision>& decisions,
+                       const Metrics& metrics) {
+  auto bbox = [&](const BBox& box) {
+    stream << '[' << box.x1 << ',' << box.y1 << ',' << box.x2 << ',' << box.y2 << ']';
+  };
+  stream << std::fixed << std::setprecision(4)
+         << "{\"frame\":" << metrics.frame_index << ",\"video_pts\":"
+         << frame.pts_seconds << ",\"observations\":[";
+  bool separator = false;
+  for (const auto& person : observations) {
+    if (separator) stream << ',';
+    separator = true;
+    stream << "{\"confidence\":" << person.confidence << ",\"bbox\":";
+    bbox(person.bbox);
+    stream << ",\"keypoint_scores\":[";
+    for (std::size_t index = 0; index < kKeypointCount; ++index) {
+      if (index) stream << ',';
+      stream << person.keypoints[index].confidence;
+    }
+    stream << "]}";
+  }
+  stream << "],\"tracks\":[";
+  separator = false;
+  for (const auto& track : tracks) {
+    if (separator) stream << ',';
+    separator = true;
+    stream << "{\"id\":" << track.track_id << ",\"confirmed\":"
+           << (track.confirmed ? "true" : "false") << ",\"predicted\":"
+           << (track.predicted ? "true" : "false") << ",\"bbox\":";
+    bbox(track.bbox);
+    stream << ",\"center_speed\":" << track.normalized_center_speed
+           << ",\"pose_motion\":" << track.pose_motion << '}';
+  }
+  stream << "],\"risks\":[";
+  separator = false;
+  for (const auto& risk : decisions) {
+    if (risk.state == RiskState::Normal) continue;
+    if (separator) stream << ',';
+    separator = true;
+    stream << "{\"id\":" << risk.track_id << ",\"kind\":\"" << risk_name(risk.kind)
+           << "\",\"state\":\"" << state_name(risk.state) << "\"}";
+  }
+  stream << "]}\n";
 }
 
 class JpegEncoder {
@@ -722,17 +778,34 @@ class LatestHttpServer {
       for (const int descriptor : clients_) shutdown(descriptor, SHUT_RDWR);
     }
     if (accept_thread_.joinable()) accept_thread_.join();
-    std::vector<std::thread> workers;
+    std::vector<Worker> workers;
     {
       std::lock_guard<std::mutex> lock(worker_mutex_);
       workers.swap(workers_);
     }
     for (auto& worker : workers) {
-      if (worker.joinable()) worker.join();
+      if (worker.thread.joinable()) worker.thread.join();
     }
   }
 
  private:
+  struct Worker {
+    std::thread thread;
+    std::shared_ptr<std::atomic<bool>> finished;
+  };
+
+  void reap_workers() {
+    std::lock_guard<std::mutex> lock(worker_mutex_);
+    for (auto entry = workers_.begin(); entry != workers_.end();) {
+      if (entry->finished->load()) {
+        entry->thread.join();
+        entry = workers_.erase(entry);
+      } else {
+        ++entry;
+      }
+    }
+  }
+
   static bool send_all(int descriptor, const void* data, std::size_t size) {
     const auto* bytes = static_cast<const std::uint8_t*>(data);
     while (size > 0) {
@@ -750,28 +823,37 @@ class LatestHttpServer {
   }
 
   void accept_loop() {
+    const int server = listen_fd_;
     while (running_.load()) {
-      const int client = accept(listen_fd_, nullptr, nullptr);
+      const int client = accept(server, nullptr, nullptr);
       if (client < 0) {
         if (running_.load()) std::this_thread::sleep_for(std::chrono::milliseconds(20));
         continue;
       }
       timeval timeout{2, 0};
       setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+      setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+      reap_workers();
       {
         std::lock_guard<std::mutex> lock(client_mutex_);
+        if (clients_.size() >= 16) {
+          close(client);
+          continue;
+        }
         clients_.insert(client);
       }
-      std::thread worker([this, client] {
+      auto finished = std::make_shared<std::atomic<bool>>(false);
+      std::thread worker([this, client, finished] {
         handle_client(client);
         {
           std::lock_guard<std::mutex> lock(client_mutex_);
           clients_.erase(client);
         }
         close(client);
+        finished->store(true);
       });
       std::lock_guard<std::mutex> lock(worker_mutex_);
-      workers_.push_back(std::move(worker));
+      workers_.push_back({std::move(worker), std::move(finished)});
     }
   }
 
@@ -857,7 +939,7 @@ class LatestHttpServer {
   std::mutex client_mutex_{};
   std::set<int> clients_{};
   std::mutex worker_mutex_{};
-  std::vector<std::thread> workers_{};
+  std::vector<Worker> workers_{};
   std::string error_{};
 };
 
@@ -896,7 +978,16 @@ int run_application(const RuntimeConfig& config) {
   source_config.preferred_device = config.preferred_device;
   VideoSource source(std::move(source_config));
   EventJournal events(config.events_path);
+  std::ofstream debug_trace;
+  if (!config.debug_trace_path.empty()) {
+    const auto parent = std::filesystem::path(config.debug_trace_path).parent_path();
+    if (!parent.empty()) std::filesystem::create_directories(parent);
+    debug_trace.open(config.debug_trace_path);
+    if (!debug_trace) throw std::runtime_error("cannot open debug trace");
+  }
   JpegEncoder encoder{};
+  std::unique_ptr<DisplaySink> display;
+  if (config.display_enabled) display = std::make_unique<DisplaySink>();
   std::optional<LatestHttpServer> http;
   std::string runtime_error;
   if (config.http_enabled) {
@@ -915,29 +1006,44 @@ int run_application(const RuntimeConfig& config) {
   int core_height = 0;
   std::size_t maximum_tracks = 0;
   double inference_total = 0.0;
+  std::uint64_t detection_frames = 0;
+  std::uint64_t observed_track_frames = 0;
+  std::uint64_t loop_start_frame = 0;
+  double last_pts = 0.0;
   const auto started = std::chrono::steady_clock::now();
   auto last_placeholder = started - std::chrono::seconds(2);
 
   while (!stop_requested.load()) {
     Frame frame{};
     if (!source.read(frame, 500)) {
-      if (source.end_of_stream()) break;
+      if (source.end_of_stream()) {
+        if (!source.last_error().empty()) throw std::runtime_error(source.last_error());
+        if (config.loop_video && metrics.frame_index > loop_start_frame) {
+          events.publish({}, last_pts, metrics);
+          core.reset();
+          loop_start_frame = metrics.frame_index;
+          if (!source.restart_file()) throw std::runtime_error(source.last_error());
+          continue;
+        }
+        break;
+      }
       if (source.waiting_for_camera()) {
         const std::string state = status_json(
             "waiting_for_usb_camera", source.active_device(), {}, {}, metrics,
             events.last_error().empty() ? source.last_error()
                                         : events.last_error());
-        if (http) {
-          http->update_status(state);
-          const auto now = std::chrono::steady_clock::now();
-          if (now - last_placeholder >= std::chrono::seconds(1)) {
-            auto placeholder = waiting_frame(metrics);
+        if (http) http->update_status(state);
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_placeholder >= std::chrono::seconds(1)) {
+          auto placeholder = waiting_frame(metrics);
+          if (display && !display->show(placeholder)) runtime_error = display->last_error();
+          if (http) {
             std::vector<std::uint8_t> jpeg;
             if (encoder.encode(placeholder, jpeg)) {
               http->publish(std::move(jpeg), state);
             }
-            last_placeholder = now;
           }
+          last_placeholder = now;
         }
         events.publish({}, 0.0, metrics);
       }
@@ -971,18 +1077,31 @@ int run_application(const RuntimeConfig& config) {
                                .count();
     metrics.fps = elapsed > 0.0 ? metrics.frame_index / elapsed : 0.0;
     metrics.visible_tracks = tracks.size();
+    if (!observations.empty()) ++detection_frames;
+    if (std::any_of(tracks.begin(), tracks.end(), [](const TrackState& track) {
+          return track.confirmed && !track.predicted;
+        })) ++observed_track_frames;
+    if (debug_trace.is_open()) {
+      write_debug_trace(debug_trace, frame, observations, tracks, decisions, metrics);
+      if (!debug_trace) throw std::runtime_error("cannot write debug trace");
+    }
     maximum_tracks = std::max(maximum_tracks, tracks.size());
     inference_total += metrics.inference_ms;
+    last_pts = frame.pts_seconds;
     events.publish(decisions, frame.pts_seconds, metrics);
 
-    Frame canvas = draw_overlay(frame, tracks, decisions, metrics);
+    std::optional<Frame> canvas;
+    if (http || display) canvas = draw_overlay(frame, tracks, decisions, metrics);
+    if (display && !display->show(*canvas)) {
+      runtime_error = "Display: " + display->last_error();
+    }
     metrics.processing_ms =
         std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - processing_started)
             .count();
     if (http) {
       std::vector<std::uint8_t> jpeg;
-      if (encoder.encode(canvas, jpeg)) {
+      if (encoder.encode(*canvas, jpeg)) {
         const std::string error = !events.last_error().empty()
                                       ? events.last_error()
                                       : runtime_error;
@@ -1013,7 +1132,14 @@ int run_application(const RuntimeConfig& config) {
             << " max_tracks=" << maximum_tracks
             << " avg_inference_ms=" << std::fixed << std::setprecision(2)
             << average_inference << " fps=" << metrics.fps
-            << " peak_rss_kb=" << usage.ru_maxrss << '\n';
+            << " peak_rss_kb=" << usage.ru_maxrss
+            << " detection_frames=" << detection_frames
+            << " observed_track_frames=" << observed_track_frames << '\n';
+  if (display) {
+    std::cout << "display_rendered=" << display->rendered_frames()
+              << " display_error=" << display->last_error() << '\n';
+  }
+  if (config.source == "video" && metrics.frame_index == 0) return 1;
   if (config.max_frames > 0 &&
       metrics.frame_index < static_cast<std::uint64_t>(config.max_frames)) {
     return 1;
