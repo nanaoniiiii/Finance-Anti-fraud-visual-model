@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "tech.nanaoni.poseguard",
+      "sha256_cert_fingerprints": [
+        "E9:2F:A1:3A:C7:B3:48:F7:D9:F8:FB:61:1C:E3:1A:07:B7:91:99:DB:FC:D0:51:52:B7:D1:81:03:5B:9A:84:23"
+      ]
+    }
+  }
+]

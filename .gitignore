@@ -1,6 +1,17 @@
 .worktrees/
 __pycache__/
 .pytest_cache/
+.secrets/
+node_modules/
+cloud/poseguard-hub/dist/
+cloud/poseguard-hub/.wrangler/
+cloud/poseguard-hub/.dev.vars
+cloud/poseguard-hub/public/downloads/*.apk
+mobile/android/.gradle/
+mobile/android/local.properties
+mobile/android/**/build/
+*.keystore
+*.jks
 .venv/
 *.py[cod]
 models/*.pt

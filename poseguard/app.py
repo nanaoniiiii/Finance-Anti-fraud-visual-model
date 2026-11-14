@@ -125,6 +125,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-display", action="store_true")
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--max-frames", type=int, default=None)
+    parser.add_argument("--cloud-config", default=None, help="bound device configuration; enables local evidence and cloud relay")
     return parser
 
 
@@ -168,9 +169,35 @@ def run(args: argparse.Namespace) -> int:
     fps = 0.0
     paused = False
     processed_frames = 0
+    cloud_relay = None
+    cloud_monitor = None
+    cloud_health = {"mode": "starting", "fps": 0.0, "people": 0, "source": str(source)}
+    cloud_frame = None
+    if getattr(args, "cloud_config", None):
+        from poseguard.cloud.edge import CloudRelay, IncidentMonitor
+
+        def capture_person(box, destination):
+            if cloud_frame is None or box is None:
+                return False
+            height, width = cloud_frame.shape[:2]
+            left, top, right, bottom = [int(value) for value in box]
+            left, top = max(0, left), max(0, top)
+            right, bottom = min(width, right), min(height, bottom)
+            if right <= left or bottom <= top:
+                return False
+            crop = cloud_frame[top:bottom, left:right]
+            factor = min(1.0, 320 / max(crop.shape[:2]))
+            if factor < 1:
+                crop = cv2.resize(crop, (max(1, int(crop.shape[1]*factor)), max(1, int(crop.shape[0]*factor))), interpolation=cv2.INTER_AREA)
+            return cv2.imwrite(destination, crop, [cv2.IMWRITE_JPEG_QUALITY, 75])
+
+        cloud_relay = CloudRelay(args.cloud_config, health=lambda: dict(cloud_health)).start()
+        cloud_monitor = IncidentMonitor(cloud_relay.directory, cloud_relay.config.get("rules"), snapshot=capture_person)
 
     try:
         capture = open_capture(source, config["camera"])
+        video_rate = capture.get(cv2.CAP_PROP_FPS) if isinstance(source, str) else 0.0
+        video_epoch = time.monotonic()
         while True:
             if paused and config["display"]["enabled"]:
                 key = cv2.waitKey(30) & 0xFF
@@ -186,7 +213,8 @@ def run(args: argparse.Namespace) -> int:
                     print("Camera frame read failed; stopping cleanly.", file=sys.stderr)
                 break
             frame = resize_for_processing(frame, int(config["display"]["max_width"]))
-            timestamp = time.monotonic()
+            timestamp = (video_epoch + processed_frames / video_rate
+                         if video_rate and video_rate > 0 else time.monotonic())
 
             inference_start = time.perf_counter()
             observations = pose_backend.infer(frame)
@@ -217,6 +245,14 @@ def run(args: argparse.Namespace) -> int:
                 timestamp,
             )
             processed_frames += 1
+            if cloud_monitor is not None:
+                cloud_frame = frame
+                cloud_monitor.rules = {**cloud_monitor.rules, **cloud_relay.config.get("rules", {})}
+                observed_ids = {track.track_id for track in tracks if track.confirmed and not track.predicted}
+                cloud_monitor.update([{"track_id": d.track_id, "risk_kind": d.kind.value,
+                    "state": d.state.value, "bbox": d.bbox, "observed": d.track_id in observed_ids}
+                    for d in decisions], timestamp=timestamp)
+                cloud_health.update(mode="running", people=len(observed_ids), fps=fps, last_error=cloud_monitor.last_error)
             new_events, previous_alerts = update_alert_transitions(
                 decisions,
                 previous_alerts,
@@ -253,6 +289,10 @@ def run(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     finally:
+        if cloud_monitor is not None:
+            cloud_monitor.reset("application_stopped")
+        if cloud_relay is not None:
+            cloud_relay.close()
         if capture is not None:
             capture.release()
         if logger is not None:

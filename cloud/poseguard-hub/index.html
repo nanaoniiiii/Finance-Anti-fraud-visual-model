@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#101a29" />
+    <meta
+      name="description"
+      content="PoseGuard 多端设备绑定、风险事件与工作人员协同处置"
+    />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <title>PoseGuard · 云端预警中心</title>
+  </head>
+  <body>
+    <div id="root">
+      <div data-pg-boot class="initial-load">
+        <img src="/icon.svg" width="42" height="42" alt="PoseGuard" />
+        <p>正在连接预警中心…</p>
+        <button hidden type="button">重新加载</button>
+      </div>
+    </div>
+    <script src="/boot-check.js"></script>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

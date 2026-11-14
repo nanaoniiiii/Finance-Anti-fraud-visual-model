@@ -2,6 +2,7 @@
 
 #include "poseguard/rknn_pose.hpp"
 #include "poseguard/video_source.hpp"
+#include "poseguard/cloud_incidents.hpp"
 
 #include <algorithm>
 #include <array>
@@ -291,6 +292,7 @@ RuntimeConfig load_runtime_config(const std::string& path) {
     else if (key == "video") config.video_path = value;
     else if (key == "device") config.preferred_device = value;
     else if (key == "events") config.events_path = value;
+    else if (key == "cloud_directory") config.cloud_directory = value;
     else if (key == "http_port") config.http_port = std::stoi(value);
     else if (key == "http_enabled") config.http_enabled = parse_bool(value);
     else if (key == "display_enabled") config.display_enabled = parse_bool(value);
@@ -594,7 +596,7 @@ void write_debug_trace(std::ostream& stream, const Frame& frame,
 
 class JpegEncoder {
  public:
-  JpegEncoder() { gst_init(nullptr, nullptr); }
+  explicit JpegEncoder(bool hardware = true) : hardware_(hardware) { gst_init(nullptr, nullptr); }
   ~JpegEncoder() { release(); }
 
   bool encode(const Frame& frame, std::vector<std::uint8_t>& jpeg) {
@@ -682,7 +684,7 @@ class JpegEncoder {
     const std::string suffix =
         " ! appsink name=poseguard_jpeg_sink emit-signals=false "
         "max-buffers=1 drop=true sync=false";
-    if (!launch(prefix + "mppjpegenc q-factor=70" + suffix) &&
+    if (!(hardware_ && launch(prefix + "mppjpegenc q-factor=70" + suffix)) &&
         !launch(prefix + "jpegenc quality=70" + suffix)) {
       return false;
     }
@@ -713,6 +715,7 @@ class JpegEncoder {
   GstElement* pipeline_{};
   GstAppSrc* source_{};
   GstAppSink* sink_{};
+  bool hardware_{true};
   int width_{};
   int height_{};
   std::string error_{};
@@ -978,6 +981,8 @@ int run_application(const RuntimeConfig& config) {
   source_config.preferred_device = config.preferred_device;
   VideoSource source(std::move(source_config));
   EventJournal events(config.events_path);
+  std::optional<CloudIncidents> incidents;
+  if (!config.cloud_directory.empty()) incidents.emplace(config.cloud_directory);
   std::ofstream debug_trace;
   if (!config.debug_trace_path.empty()) {
     const auto parent = std::filesystem::path(config.debug_trace_path).parent_path();
@@ -986,6 +991,7 @@ int run_application(const RuntimeConfig& config) {
     if (!debug_trace) throw std::runtime_error("cannot open debug trace");
   }
   JpegEncoder encoder{};
+  JpegEncoder evidence_encoder{false};
   std::unique_ptr<DisplaySink> display;
   if (config.display_enabled) display = std::make_unique<DisplaySink>();
   std::optional<LatestHttpServer> http;
@@ -1020,6 +1026,7 @@ int run_application(const RuntimeConfig& config) {
         if (!source.last_error().empty()) throw std::runtime_error(source.last_error());
         if (config.loop_video && metrics.frame_index > loop_start_frame) {
           events.publish({}, last_pts, metrics);
+          if (incidents) incidents->reset("video_loop");
           core.reset();
           loop_start_frame = metrics.frame_index;
           if (!source.restart_file()) throw std::runtime_error(source.last_error());
@@ -1028,6 +1035,10 @@ int run_application(const RuntimeConfig& config) {
         break;
       }
       if (source.waiting_for_camera()) {
+        // A reconnected camera may show a different scene/person and starts
+        // its GStreamer PTS at zero. Do not carry old risk evidence across it.
+        core.reset();
+        if (incidents) incidents->reset("camera_disconnected");
         const std::string state = status_json(
             "waiting_for_usb_camera", source.active_device(), {}, {}, metrics,
             events.last_error().empty() ? source.last_error()
@@ -1051,7 +1062,7 @@ int run_application(const RuntimeConfig& config) {
       continue;
     }
 
-    if (frame.timeline_seconds <= 0.0 && config.source == "camera") {
+    if (config.source == "camera") {
       frame.timeline_seconds =
           std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                         started)
@@ -1089,6 +1100,30 @@ int run_application(const RuntimeConfig& config) {
     inference_total += metrics.inference_ms;
     last_pts = frame.pts_seconds;
     events.publish(decisions, frame.pts_seconds, metrics);
+    if (incidents) {
+      incidents->update(tracks, decisions, frame.timeline_seconds,
+          [&](BBox box) {
+            // Crop the target before drawing overlays; fixed dimensions keep
+            // libjpeg's pipeline stable even when a person's box moves.
+            int x1=std::clamp(static_cast<int>(box.x1),0,frame.width-1);
+            int y1=std::clamp(static_cast<int>(box.y1),0,frame.height-1);
+            int x2=std::clamp(static_cast<int>(box.x2),x1+1,frame.width);
+            int y2=std::clamp(static_cast<int>(box.y2),y1+1,frame.height);
+            Frame crop{};crop.width=320;crop.height=320;crop.pts_seconds=frame.pts_seconds;
+            crop.rgb.resize(320*320*3,0);
+            double scale=std::min(320.0/(x2-x1),320.0/(y2-y1));
+            int width=std::max(1,static_cast<int>((x2-x1)*scale));
+            int height=std::max(1,static_cast<int>((y2-y1)*scale));
+            for(int y=0;y<height;++y)for(int x=0;x<width;++x){
+              int sx=x1+std::min(x2-x1-1,static_cast<int>(x/scale));
+              int sy=y1+std::min(y2-y1-1,static_cast<int>(y/scale));
+              auto target=((y+(320-height)/2)*320+x+(320-width)/2)*3;
+              std::copy_n(frame.rgb.data()+(sy*frame.width+sx)*3,3,crop.rgb.data()+target);
+            }
+            std::vector<std::uint8_t> jpeg;evidence_encoder.encode(crop,jpeg);return jpeg;
+          });
+      if(!incidents->last_error().empty()) runtime_error="Cloud journal: "+incidents->last_error();
+    }
 
     std::optional<Frame> canvas;
     if (http || display) canvas = draw_overlay(frame, tracks, decisions, metrics);
@@ -1123,6 +1158,7 @@ int run_application(const RuntimeConfig& config) {
   }
 
   source.close();
+  if (incidents) incidents->reset("runtime_stopped");
   if (http) http->stop();
   rusage usage{};
   getrusage(RUSAGE_SELF, &usage);

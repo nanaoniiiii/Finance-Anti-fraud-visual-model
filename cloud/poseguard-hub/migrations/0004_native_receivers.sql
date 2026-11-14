@@ -1,0 +1,1 @@
+CREATE TABLE IF NOT EXISTS native_receivers(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,installation_id TEXT NOT NULL,label TEXT NOT NULL,device_ids_json TEXT NOT NULL DEFAULT '[]',token_hash TEXT NOT NULL UNIQUE,last_seen TEXT,last_success TEXT,last_error TEXT,created_at TEXT NOT NULL,revoked_at TEXT,UNIQUE(user_id,installation_id));

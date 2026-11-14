@@ -105,10 +105,11 @@ def parse_args(argv=None):
         action="store_true",
         help="shorten temporal thresholds for an on-device demo",
     )
+    parser.add_argument("--cloud-config", default=None, help="bound cloud configuration JSON")
     return parser.parse_args(argv)
 
 
-def run(*, max_frames=0, no_display=False, test_timers=False):
+def run(*, max_frames=0, no_display=False, test_timers=False, cloud_config=None):
     from maix import app, camera, display, image, nn
 
     settings = dict(CONFIG)
@@ -123,6 +124,29 @@ def run(*, max_frames=0, no_display=False, test_timers=False):
     consecutive_failures = 0
     loop_started = time.monotonic()
     latest_metrics = {"fps": 0.0, "inference_ms": 0.0}
+    cloud_relay = None
+    cloud_monitor = None
+    cloud_frame = None
+    cloud_health = {"mode": "starting", "fps": 0.0, "people": 0, "source": "MaixCAM camera"}
+    if cloud_config:
+        try:
+            from poseguard.cloud.edge import CloudRelay, IncidentMonitor
+        except ImportError:
+            from poseguard_cloud import CloudRelay, IncidentMonitor
+
+        def capture_person(box, destination):
+            if cloud_frame is None or not box:
+                return False
+            left, top, right, bottom = [int(value) for value in box]
+            left, top = max(0, left), max(0, top)
+            right, bottom = min(width, right), min(height, bottom)
+            if right <= left or bottom <= top:
+                return False
+            cloud_frame.crop(left, top, right-left, bottom-top).save(destination)
+            return True
+
+        cloud_relay = CloudRelay(cloud_config, health=lambda: dict(cloud_health)).start()
+        cloud_monitor = IncidentMonitor(cloud_relay.directory, cloud_relay.config.get("rules"), snapshot=capture_person)
 
     try:
         detector = nn.YOLO11(model=settings["model_path"], dual_buff=True)
@@ -204,6 +228,14 @@ def run(*, max_frames=0, no_display=False, test_timers=False):
                 people=people,
                 metrics=latest_metrics,
             )
+            if cloud_monitor is not None:
+                cloud_frame = frame
+                observed_ids = {track["track_id"] for track in tracks if not track.get("predicted", False)}
+                cloud_monitor.rules = {**cloud_monitor.rules, **cloud_relay.config.get("rules", {})}
+                cloud_monitor.update([{"track_id": item["track_id"], "risk_kind": item["risk"],
+                    "state": item["state"], "bbox": next((track["bbox"] for track in tracks if track["track_id"] == item["track_id"]), None),
+                    "observed": item["track_id"] in observed_ids} for item in decisions], timestamp=timestamp)
+                cloud_health.update(mode="running", fps=latest_metrics["fps"], people=people, last_error=cloud_monitor.last_error)
 
             if disp is not None:
                 renderer.render(frame, tracks, decisions, latest_metrics)
@@ -221,6 +253,10 @@ def run(*, max_frames=0, no_display=False, test_timers=False):
                     flush=True,
                 )
     finally:
+        if cloud_monitor is not None:
+            cloud_monitor.reset("application_stopped")
+        if cloud_relay is not None:
+            cloud_relay.close()
         _close_resource(disp, "display")
         _close_resource(cam, "camera")
         detector = None
@@ -251,6 +287,7 @@ def main(argv=None):
         max_frames=max(args.max_frames, 0),
         no_display=args.no_display,
         test_timers=args.test_timers,
+        cloud_config=args.cloud_config,
     )
 
 

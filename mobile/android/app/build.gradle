@@ -1,0 +1,27 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'tech.nanaoni.poseguard'
+    compileSdk 36
+    defaultConfig { applicationId 'tech.nanaoni.poseguard'; minSdk 24; targetSdk 36; versionCode 121; versionName '1.2.0' }
+    signingConfigs {
+        release {
+            if (System.getenv('PG_ANDROID_KEYSTORE')) {
+                storeFile file(System.getenv('PG_ANDROID_KEYSTORE'))
+                storePassword System.getenv('PG_ANDROID_STORE_PASS')
+                keyAlias 'poseguard'
+                keyPassword System.getenv('PG_ANDROID_STORE_PASS')
+            }
+        }
+    }
+    buildTypes { release { signingConfig signingConfigs.release; minifyEnabled true; proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro' } }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    sourceSets.main.assets.srcDir(layout.buildDirectory.dir('generated/poseguard-assets'))
+}
+
+def hubDist = file("$rootDir/../../cloud/poseguard-hub/dist")
+tasks.register('stageHubAssets', Sync) {
+    doFirst { if (!new File(hubDist, 'index.html').exists()) throw new GradleException('Build cloud/poseguard-hub with npm run build before building Android') }
+    from(hubDist) { include 'index.html', 'boot-check.js', 'icon.svg', 'manifest.webmanifest', 'assets/**', 'icons/**' }
+    into(layout.buildDirectory.dir('generated/poseguard-assets/hub'))
+}
+tasks.named('preBuild').configure { dependsOn('stageHubAssets') }

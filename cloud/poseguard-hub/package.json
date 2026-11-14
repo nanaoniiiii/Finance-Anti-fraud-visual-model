@@ -1,0 +1,28 @@
+{
+  "name": "poseguard-hub",
+  "version": "1.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "worker:dev": "wrangler dev --local --port 8787",
+    "test": "node --test tests/*.test.mjs",
+    "deploy": "npm run build && wrangler deploy"
+  },
+  "dependencies": {
+    "lucide-react": "^1.72.0",
+    "qrcode": "^1.5.4",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "web-push": "^4.0.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.3.0",
+    "esbuild": "^0.28.2",
+    "miniflare": "^5.20261113.0-beta",
+    "vite": "^8.3.8",
+    "wrangler": "^4.162.0"
+  }
+}

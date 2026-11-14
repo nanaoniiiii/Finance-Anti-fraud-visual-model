@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">PoseGuard</string>
+    <string name="asset_statements" translatable="false">[{\"relation\":[\"delegate_permission/common.handle_all_urls\"],\"target\":{\"namespace\":\"web\",\"site\":\"https://poseguard.nanaoni.tech\"}}]</string>
+</resources>

@@ -49,6 +49,7 @@ if(POSEGUARD_ENABLE_BOARD)
     src/main.cpp
     src/rknn_engine.cpp
     src/runtime.cpp
+    src/cloud_incidents.cpp
     src/video_source.cpp
     src/display_sink.cpp
   )
@@ -113,8 +114,12 @@ if(POSEGUARD_BUILD_TESTS)
   target_compile_options(poseguard_uvc_test PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME poseguard_uvc COMMAND poseguard_uvc_test)
 
-  add_executable(poseguard_runtime_test tests/test_runtime.cpp src/runtime.cpp)
+  add_executable(poseguard_runtime_test tests/test_runtime.cpp src/runtime.cpp src/cloud_incidents.cpp)
   target_link_libraries(poseguard_runtime_test PRIVATE poseguard_core)
   target_compile_options(poseguard_runtime_test PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME poseguard_runtime COMMAND poseguard_runtime_test)
+  add_executable(poseguard_cloud_test tests/test_cloud.cpp src/cloud_incidents.cpp)
+  target_compile_options(poseguard_cloud_test PRIVATE -UNDEBUG)
+  target_link_libraries(poseguard_cloud_test PRIVATE poseguard_core)
+  add_test(NAME poseguard_cloud COMMAND poseguard_cloud_test)
 endif()

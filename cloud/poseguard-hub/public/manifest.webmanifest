@@ -1,0 +1,12 @@
+{
+  "id": "/",
+  "name": "PoseGuard 云端预警",
+  "short_name": "PoseGuard",
+  "description": "多端设备绑定、风险预警与协同处置",
+  "start_url": "/?source=installed",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f2f5f8",
+  "theme_color": "#101a29",
+  "icons": [{"src":"/icons/icon-192.png","sizes":"192x192","type":"image/png","purpose":"any maskable"},{"src":"/icons/icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}]
+}

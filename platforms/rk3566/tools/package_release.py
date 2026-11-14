@@ -22,6 +22,7 @@ def main() -> int:
     parser.add_argument('--rockchip-license', type=Path, required=True)
     parser.add_argument('--agpl-license', type=Path, required=True)
     parser.add_argument('--validation-report', type=Path)
+    parser.add_argument('--relay', type=Path, help='Static Linux ARM64 cloud relay')
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--version', default='1.1.0')
     args = parser.parse_args()
@@ -46,6 +47,10 @@ def main() -> int:
     }
     if args.validation_report:
         files['validation.md'] = args.validation_report
+    if args.relay:
+        files['bin/poseguard-relay'] = args.relay
+        files['service/S99poseguardcloud'] = platform / 'service/S99poseguardcloud'
+        files['CLOUD.md'] = repo / 'docs/CLOUD.zh-CN.md'
     for source in files.values():
         if not source.is_file() or source.stat().st_size == 0:
             raise ValueError(f'Required release input is missing or empty: {source}')
@@ -57,7 +62,7 @@ def main() -> int:
             target = root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             data = source.read_bytes()
-            if relative not in ('bin/poseguard-rk3566', 'lib/librknnrt.so') and not relative.startswith('models/'):
+            if relative not in ('bin/poseguard-rk3566', 'bin/poseguard-relay', 'lib/librknnrt.so') and not relative.startswith('models/'):
                 data = data.replace(b'\r\n', b'\n')
             target.write_bytes(data)
             if relative.startswith('bin/') or relative.endswith('.sh') or relative.startswith('service/'):

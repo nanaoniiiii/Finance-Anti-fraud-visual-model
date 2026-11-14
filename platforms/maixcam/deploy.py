@@ -78,6 +78,10 @@ def deploy(host, user, password, remote_dir, source_dir=None):
                 remote_path = posixpath.join(remote_dir, local_path.name)
                 sftp.put(str(local_path), remote_path)
                 print("uploaded {} -> {}".format(local_path.name, remote_path))
+            shared_cloud = source.parent.parent / "poseguard" / "cloud" / "edge.py"
+            if shared_cloud.is_file():
+                sftp.put(str(shared_cloud), posixpath.join(remote_dir, "poseguard_cloud.py"))
+                print("uploaded shared cloud transport -> poseguard_cloud.py")
         finally:
             sftp.close()
 

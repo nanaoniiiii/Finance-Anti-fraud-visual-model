@@ -7,7 +7,7 @@
 安装电脑端 Android platform-tools，连接板子的 USB 调试口。执行 `adb devices -l` 获取序列号。将本文件所在压缩包与源码中的 `platforms/rk3566/deploy-adb.ps1` 放在电脑上：
 
 ```powershell
-& .\deploy-adb.ps1 -Serial "你的设备序列号" -BundlePath ".\PoseGuard-RK3566-v1.1.0-aarch64.tar.gz"
+& .\deploy-adb.ps1 -Serial "你的设备序列号" -BundlePath ".\PoseGuard-RK3566-v1.2.0-aarch64.tar.gz"
 ```
 
 安装前核验整个包的 SHA-256，并在板上进行 NPU 模型冒烟测试。运行库放入 `/userdata/poseguard/lib`，通过应用私有路径加载。升级时备份旧文件并保留已有配置。
@@ -23,7 +23,7 @@ adb -s "你的设备序列号" forward tcp:18081 tcp:8081
 ## 已在 Linux 板上解压
 
 ```sh
-gzip -dc PoseGuard-RK3566-v1.1.0-aarch64.tar.gz | tar -xf -
+gzip -dc PoseGuard-RK3566-v1.2.0-aarch64.tar.gz | tar -xf -
 cd poseguard-rk3566
 sh install.sh
 ```
@@ -59,6 +59,8 @@ tail -f /userdata/poseguard/logs/poseguard.log
 配置：`/userdata/poseguard/config/poseguard.conf`。事件：`/userdata/poseguard/runs/events.jsonl`。默认不保存原始画面。风险提示仅供现场人工关注，不能判定诈骗或违法事实。当前板端版本以贴耳姿态提示疑似通话，未部署桌面端的独立手机实物确认模型。
 
 ## 模型与来源
+
+1.2.0 包含云端接入中继。设备联网后按包内 `CLOUD.md` 完成绑定，可同步第 101 帧告警、目标截图和工作人员介入请求。
 
 原始权重：Ultralytics `yolo11n-pose.pt`，来源为 `https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n-pose.pt`。转换工具：Rockchip RKNN Toolkit2 2.3.2。权重和中间 ONNX 随同版本的 model-sources 压缩包提供。第三方授权文本位于 `licenses/`；转换、构建和应用源码位于同一 GitHub Release 对应标签。
 

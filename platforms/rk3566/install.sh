@@ -14,6 +14,9 @@ bin/poseguard-run --model-smoke "$PACKAGE/models/poseguard-yolo11n-pose-320-int8
 if [ -f "$SERVICE" ]; then
     "$SERVICE" stop
 fi
+if [ -f /etc/init.d/S99poseguardcloud ]; then
+    /etc/init.d/S99poseguardcloud stop
+fi
 mkdir -p "$ROOT/bin" "$ROOT/lib" "$ROOT/models" "$ROOT/config" \
     "$ROOT/runs" "$ROOT/logs" "$ROOT/media" "$ROOT/service" "$ROOT/backup"
 backup="$ROOT/backup/$(date +%Y%m%d-%H%M%S)-$$"
@@ -28,6 +31,15 @@ for relative in bin/poseguard-rk3566 bin/poseguard-run lib/librknnrt.so \
     cp "$PACKAGE/$relative" "$target.new"
     mv "$target.new" "$target"
 done
+if [ -f "$PACKAGE/bin/poseguard-relay" ]; then
+    if [ -f "$ROOT/bin/poseguard-relay" ]; then cp -p "$ROOT/bin/poseguard-relay" "$backup/poseguard-relay"; fi
+    cp "$PACKAGE/bin/poseguard-relay" "$ROOT/bin/poseguard-relay.new"
+    chmod 755 "$ROOT/bin/poseguard-relay.new"
+    mv "$ROOT/bin/poseguard-relay.new" "$ROOT/bin/poseguard-relay"
+    cp "$PACKAGE/service/S99poseguardcloud" /etc/init.d/S99poseguardcloud.new
+    chmod 755 /etc/init.d/S99poseguardcloud.new
+    mv /etc/init.d/S99poseguardcloud.new /etc/init.d/S99poseguardcloud
+fi
 chmod 755 "$ROOT/bin/poseguard-rk3566" "$ROOT/bin/poseguard-run" "$ROOT/service/S99poseguard"
 if [ ! -f "$ROOT/config/poseguard.conf" ]; then
     cp "$PACKAGE/config/poseguard.conf" "$ROOT/config/poseguard.conf"
@@ -42,5 +54,6 @@ mv "$SERVICE.new" "$SERVICE"
 sync
 "$SERVICE" start
 "$SERVICE" status
+if [ -f "$ROOT/cloud.json" ] && [ -x /etc/init.d/S99poseguardcloud ]; then /etc/init.d/S99poseguardcloud start; fi
 echo "Installed in $ROOT. Existing configuration preserved."
 echo 'Web preview: http://<board-ip>:8081/ (or use ADB forwarding).'

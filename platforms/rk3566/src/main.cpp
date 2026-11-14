@@ -11,7 +11,7 @@
 #endif
 
 namespace {
-constexpr std::string_view kVersion = "1.1.0";
+constexpr std::string_view kVersion = "1.2.0";
 
 int parse_max_frames(int argc, char* argv[], int fallback) {
   for (int index = 1; index + 1 < argc; ++index) {
@@ -111,6 +111,8 @@ poseguard::RuntimeConfig parse_runtime_config(int argc, char* argv[]) {
       config.loop_video = true;
     } else if (option == "--debug-trace") {
       config.debug_trace_path = require_value();
+    } else if (option == "--cloud-directory") {
+      config.cloud_directory = require_value();
     } else {
       throw std::invalid_argument("unknown option: " + std::string(option));
     }

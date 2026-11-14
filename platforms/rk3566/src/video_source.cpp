@@ -225,6 +225,7 @@ struct VideoSource::Impl {
   std::string error{};
   bool eos{};
   std::chrono::steady_clock::time_point last_scan{};
+  int empty_reads{};
 #if defined(POSEGUARD_WITH_GSTREAMER)
   GstElement* pipeline{};
   GstAppSink* sink{};
@@ -242,6 +243,7 @@ struct VideoSource::Impl {
       pipeline = nullptr;
     }
     device.clear();
+    empty_reads = 0;
   }
 
   bool launch(const std::string& description, const std::string& source_name) {
@@ -325,10 +327,9 @@ struct VideoSource::Impl {
             "image/jpeg,width=" + std::to_string(format.width) +
             ",height=" + std::to_string(format.height) +
             ",framerate=" + std::to_string(format.fps) + "/1";
-        if (launch(source + caps + " ! jpegparse ! mppjpegdec" + sink_suffix,
-                   selected->path)) {
-          return true;
-        }
+        // The old RK3566 MPP JPEG decoder can block its state transition on
+        // UVC disconnect. libjpeg keeps this small camera stream recoverable;
+        // file H.264 decoding continues to use MPP.
         return launch(source + caps + " ! jpegparse ! jpegdec" + sink_suffix,
                       selected->path);
       }
@@ -409,6 +410,11 @@ bool VideoSource::read(Frame& frame, int timeout_ms) {
       }
       gst_message_unref(message);
       impl_->release_pipeline();
+    } else if (impl_->config.kind == VideoSourceKind::UsbCamera &&
+               (++impl_->empty_reads >= 6 ||
+                !probe_video_capture(impl_->device))) {
+      impl_->error = "USB camera stopped delivering frames; reconnecting";
+      impl_->release_pipeline();
     }
     return false;
   }
@@ -449,6 +455,7 @@ bool VideoSource::read(Frame& frame, int timeout_ms) {
   gst_buffer_unmap(buffer, &map);
   gst_sample_unref(sample);
   impl_->error.clear();
+  impl_->empty_reads = 0;
   return true;
 #else
   static_cast<void>(frame);

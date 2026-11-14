@@ -16,6 +16,7 @@ struct RuntimeConfig {
   std::string preferred_device{};
   std::string events_path{"/userdata/poseguard/runs/events.jsonl"};
   std::string debug_trace_path{};
+  std::string cloud_directory{"/userdata/poseguard/cloud-data"};
   int http_port{8081};
   int max_frames{};
   bool benchmark{};
