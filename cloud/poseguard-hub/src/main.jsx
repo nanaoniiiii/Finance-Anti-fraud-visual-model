@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import DevicePreview from './DevicePreview.jsx';
+import useSettingsDraft from './useSettingsDraft.js';
+import { mailDraft } from './settings-draft.js';
 import {
   Activity,
   ArrowDownToLine,
@@ -412,6 +414,7 @@ function App() {
   const [mobileMenu, setMobileMenu] = useState(false);
   const [error, setError] = useState('');
   const cursor = useRef(0);
+  const reloadVersion = useRef(0);
   const seen = useRef(new Set());
   const socket = useRef(null);
   const alertAudio = useRef(null);
@@ -449,7 +452,9 @@ function App() {
       setLoading(false);
     }
   }
-  async function reload() {
+  async function reload(savedSettings) {
+    const version = ++reloadVersion.current;
+    if (savedSettings?.rules && savedSettings?.mail) setSettings(savedSettings);
     try {
       const [fleet, feed, counts, prefs] = await Promise.all([
         api('/devices'),
@@ -457,6 +462,7 @@ function App() {
         api('/stats'),
         api('/settings'),
       ]);
+      if (version !== reloadVersion.current) return;
       setDevices(fleet.devices);
       setReceivers(fleet.receivers);
       setEvents(feed.events);
@@ -464,6 +470,7 @@ function App() {
       setSettings(prefs);
       setError('');
     } catch (e) {
+      if (version !== reloadVersion.current) return;
       if (e.status === 401) setUser(null);
       else setError(e.message);
     }
@@ -2317,29 +2324,29 @@ function Members({ notify }) {
 }
 
 function SettingsPage({ settings, user, notify, reload }) {
-  const [rules, setRules] = useState(settings.rules);
-  const [mail, setMail] = useState({ ...settings.mail, password: '' });
-  const [recipients, setRecipients] = useState(
-    settings.mail.recipients.join('\n')
-  );
+  const [rules, setRules, rulesSaved, rulesDirty] = useSettingsDraft(settings.rules);
+  const [mail, setMail, mailSaved, mailDirty] = useSettingsDraft(mailDraft(settings.mail));
+  const recipients = mail.recipientText;
+  const setRecipients = recipientText => setMail(value => ({ ...value, recipientText }));
   const [saving, setSaving] = useState('');
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  useEffect(() => {
-    setRules(settings.rules);
-    setMail({ ...settings.mail, password: '' });
-    setRecipients(settings.mail.recipients.join('\n'));
-  }, [settings]);
   const owner = user.role === 'owner';
+  const mailReady =
+    settings.mail.provider === 'agently'
+      ? !!settings.mail.agently?.connected
+      : !!settings.mail.password_set;
   async function save(kind) {
     setSaving(kind);
+    const submitted = kind === 'rules' ? rules : mail;
     try {
+      const { recipientText, ...mailInput } = mail;
       const input =
         kind === 'rules'
           ? { rules }
           : {
               mail: {
-                ...mail,
+                ...mailInput,
                 recipients: recipients.split(/[\s,;，；]+/).filter(Boolean),
               },
             };
@@ -2347,11 +2354,12 @@ function SettingsPage({ settings, user, notify, reload }) {
         method: 'PUT',
         body: JSON.stringify(input),
       });
-      if (kind === 'mail') setMail({ ...result.mail, password: '' });
+      if (kind === 'mail') mailSaved(mailDraft(result.mail), submitted);
+      else rulesSaved(result.rules, submitted);
       notify(
         kind === 'rules' ? '规则已保存，设备心跳时同步' : '发信设置已保存'
       );
-      reload();
+      await reload(result);
     } catch (e) {
       notify(e.message);
     } finally {
@@ -2452,10 +2460,10 @@ function SettingsPage({ settings, user, notify, reload }) {
             </span>
           </label>
           <div className="settings-footer">
-            <span>端侧先保留本地记录，超过阈值再上报。</span>
+            <span>{rulesDirty ? '有未保存的规则修改，自动同步会保留当前输入。' : '端侧先保留本地记录，超过阈值再上报。'}</span>
             <Button
               kind="primary"
-              disabled={!owner}
+              disabled={!owner || !!saving}
               busy={saving === 'rules'}
               onClick={() => save('rules')}
             >
@@ -2467,16 +2475,12 @@ function SettingsPage({ settings, user, notify, reload }) {
       <section className="panel settings-panel">
         <PanelHeader
           title="邮箱通知"
-          subtitle="通用 SMTP 接入；按邮箱或发信服务商提供的参数配置"
+          subtitle="支持通用 SMTP 和 Agent Mail 云端发信；收件人与通知开关统一管理"
           action={
             <Badge
-              type={
-                settings.mail.enabled && settings.mail.password_set
-                  ? 'green'
-                  : 'orange'
-              }
+              type={settings.mail.enabled && mailReady ? 'green' : 'orange'}
             >
-              {settings.mail.password_set
+              {mailReady
                 ? settings.mail.enabled
                   ? '自动通知已启用'
                   : '已配置 · 自动通知关闭'
@@ -2486,100 +2490,184 @@ function SettingsPage({ settings, user, notify, reload }) {
         />
         <div className="settings-body">
           <div className="settings-fields">
-            <label>
-              发件邮箱
-              <input
-                type="email"
-                value={mail.from}
-                disabled={!owner}
-                onChange={(e) => setMail({ ...mail, from: e.target.value })}
-              />
-            </label>
-            <label>
-              SMTP 登录账号
-              <input
-                type="text"
-                autoComplete="off"
-                value={mail.username}
-                disabled={!owner}
-                onChange={(e) => setMail({ ...mail, username: e.target.value })}
-              />
-              <small>
-                填写服务商提供的登录名，可以是邮箱、独立用户名或 API 账号。
-              </small>
-            </label>
-            <label>
-              SMTP 服务器
-              <input
-                placeholder="smtp.example.com"
-                value={mail.host}
-                disabled={!owner}
-                onChange={(e) => setMail({ ...mail, host: e.target.value })}
-              />
-            </label>
-            <label>
-              SMTP 端口
-              <input
-                type="number"
-                inputMode="numeric"
-                min={1}
-                max={65535}
-                value={mail.port}
+            <label className="span-two">
+              发信通道
+              <select
+                value={mail.provider || 'smtp'}
                 disabled={!owner}
                 onChange={(e) =>
-                  setMail({ ...mail, port: Number(e.target.value) })
+                  setMail({
+                    ...mail,
+                    password: '',
+                    provider: e.target.value,
+                    from:
+                      e.target.value === 'agently'
+                        ? settings.mail.agently?.email || ''
+                        : (settings.mail.smtp_from ?? settings.mail.from),
+                  })
                 }
-              />
-              <small>
-                常用 465 或 587，也可填写服务商的自定义端口；云端不支持 25。
-              </small>
-            </label>
-            <label>
-              连接加密
-              <select
-                value={
-                  mail.security || (mail.port === 587 ? 'starttls' : 'tls')
-                }
-                disabled={!owner}
-                onChange={(e) => setMail({ ...mail, security: e.target.value })}
               >
-                <option value="tls">TLS · 建立连接时加密</option>
-                <option value="starttls">STARTTLS · 连接后升级加密</option>
+                <option value="smtp">通用 SMTP</option>
+                <option value="agently">Agent Mail · 云端独立发信</option>
               </select>
-              <small>与端口分别设置，以服务商文档为准。</small>
             </label>
-            <label>
-              认证方式
-              <select
-                value={mail.auth || 'auto'}
-                disabled={!owner}
-                onChange={(e) => setMail({ ...mail, auth: e.target.value })}
-              >
-                <option value="auto">自动 · 协商 LOGIN / PLAIN</option>
-                <option value="login">LOGIN</option>
-                <option value="plain">PLAIN</option>
-              </select>
-              <small>通常选择自动；登录信息在加密连接内发送。</small>
-            </label>
-            <label className="span-two">
-              SMTP 密码 / 授权码
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={mail.password}
-                disabled={!owner}
-                onChange={(e) => setMail({ ...mail, password: e.target.value })}
-                placeholder={
-                  mail.password_set
-                    ? '已设置；同一服务器和账号下留空保留'
-                    : '填写服务商提供的密码、授权码或 SMTP API Key'
-                }
-              />
-              <small>
-                使用服务商为 SMTP 提供的凭据；发件地址需有发送权限。
-                更换服务器、登录账号或认证方式后，请填写对应的新凭据。
-              </small>
-            </label>
+            {mail.provider === 'agently' ? (
+              <div className="span-two mail-service-status">
+                <strong>
+                  {settings.mail.agently?.connected
+                    ? settings.mail.agently.email
+                    : 'Agent Mail 待授权接入'}
+                </strong>
+                <p>
+                  由云端直接发信并自动续期，这台电脑关闭后仍可处理告警邮件。原
+                  SMTP 配置保留，可随时切换。
+                </p>
+                {settings.mail.agently?.daily_send_quota && (
+                  <p>
+                    服务商每日发送额度：{settings.mail.agently.daily_send_quota}
+                    ；达到限额时邮件排队等待，网页和 App 通知继续。
+                  </p>
+                )}
+                {settings.mail.agently?.expires_at && (
+                  <small>
+                    当前令牌有效期至{' '}
+                    {new Date(settings.mail.agently.expires_at).toLocaleString(
+                      'zh-CN'
+                    )}
+                    ，发信前由云端按需续期。
+                  </small>
+                )}
+                {settings.mail.agently?.last_error && (
+                  <p className="form-message">
+                    {settings.mail.agently.last_error}
+                  </p>
+                )}
+                <Button
+                  disabled={!owner || !settings.mail.agently?.connected}
+                  busy={saving === 'verify'}
+                  onClick={async () => {
+                    setSaving('verify');
+                    try {
+                      await api('/settings/agently/verify', {
+                        method: 'POST',
+                        body: '{}',
+                      });
+                      await reload();
+                      notify('云端授权验证与续期成功');
+                    } catch (e) {
+                      notify(e.message);
+                    } finally {
+                      setSaving('');
+                    }
+                  }}
+                >
+                  验证并续期授权
+                </Button>
+              </div>
+            ) : (
+              <>
+                <label>
+                  发件邮箱
+                  <input
+                    type="email"
+                    value={mail.from}
+                    disabled={!owner}
+                    onChange={(e) => setMail({ ...mail, from: e.target.value })}
+                  />
+                </label>
+                <label>
+                  SMTP 登录账号
+                  <input
+                    type="text"
+                    autoComplete="off"
+                    value={mail.username}
+                    disabled={!owner}
+                    onChange={(e) =>
+                      setMail({ ...mail, username: e.target.value })
+                    }
+                  />
+                  <small>
+                    填写服务商提供的登录名，可以是邮箱、独立用户名或 API 账号。
+                  </small>
+                </label>
+                <label>
+                  SMTP 服务器
+                  <input
+                    placeholder="smtp.example.com"
+                    value={mail.host}
+                    disabled={!owner}
+                    onChange={(e) => setMail({ ...mail, host: e.target.value })}
+                  />
+                </label>
+                <label>
+                  SMTP 端口
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={65535}
+                    value={mail.port}
+                    disabled={!owner}
+                    onChange={(e) =>
+                      setMail({ ...mail, port: Number(e.target.value) })
+                    }
+                  />
+                  <small>
+                    常用 465 或 587，也可填写服务商的自定义端口；云端不支持 25。
+                  </small>
+                </label>
+                <label>
+                  连接加密
+                  <select
+                    value={
+                      mail.security || (mail.port === 587 ? 'starttls' : 'tls')
+                    }
+                    disabled={!owner}
+                    onChange={(e) =>
+                      setMail({ ...mail, security: e.target.value })
+                    }
+                  >
+                    <option value="tls">TLS · 建立连接时加密</option>
+                    <option value="starttls">STARTTLS · 连接后升级加密</option>
+                  </select>
+                  <small>与端口分别设置，以服务商文档为准。</small>
+                </label>
+                <label>
+                  认证方式
+                  <select
+                    value={mail.auth || 'auto'}
+                    disabled={!owner}
+                    onChange={(e) => setMail({ ...mail, auth: e.target.value })}
+                  >
+                    <option value="auto">自动 · 协商 LOGIN / PLAIN</option>
+                    <option value="login">LOGIN</option>
+                    <option value="plain">PLAIN</option>
+                  </select>
+                  <small>通常选择自动；登录信息在加密连接内发送。</small>
+                </label>
+                <label className="span-two">
+                  SMTP 密码 / 授权码
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    value={mail.password}
+                    disabled={!owner}
+                    onChange={(e) =>
+                      setMail({ ...mail, password: e.target.value })
+                    }
+                    placeholder={
+                      settings.mail.password_set
+                        ? '已设置；同一服务器和账号下留空保留'
+                        : '填写服务商提供的密码、授权码或 SMTP API Key'
+                    }
+                  />
+                  <small>
+                    使用服务商为 SMTP 提供的凭据；发件地址需有发送权限。
+                    更换服务器、登录账号或认证方式后，请填写对应的新凭据。
+                  </small>
+                </label>
+              </>
+            )}
             <label className="span-two">
               告警收件人
               <textarea
@@ -2604,18 +2692,26 @@ function SettingsPage({ settings, user, notify, reload }) {
           </label>
           <div className="settings-footer">
             <span>
-              测试使用已保存配置，可在自动通知关闭时发送。“服务已接受”表示发信服务接受了请求。
+              {mailDirty ? '有未保存的发信修改，自动同步会保留当前输入；点击“保存发信设置”后生效。' : '测试使用已保存配置，可在自动通知关闭时发送。“服务已接受”表示发信服务接受了请求。'}
             </span>
             <div className="inline">
               <Button
                 icon={Mail}
                 disabled={
                   !owner ||
-                  !settings.mail.password_set ||
+                  !mailReady ||
+                  mailDirty ||
+                  mail.provider !== settings.mail.provider ||
                   !!mail.password ||
-                  ['host', 'port', 'security', 'auth', 'username', 'from'].some(
-                    (key) => mail[key] !== settings.mail[key]
-                  )
+                  (mail.provider !== 'agently' &&
+                    [
+                      'host',
+                      'port',
+                      'security',
+                      'auth',
+                      'username',
+                      'from',
+                    ].some((key) => mail[key] !== settings.mail[key]))
                 }
                 busy={saving === 'test'}
                 onClick={async () => {
@@ -2637,7 +2733,7 @@ function SettingsPage({ settings, user, notify, reload }) {
               </Button>
               <Button
                 kind="primary"
-                disabled={!owner}
+                disabled={!owner || !!saving}
                 busy={saving === 'mail'}
                 onClick={() => save('mail')}
               >

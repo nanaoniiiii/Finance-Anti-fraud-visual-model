@@ -187,6 +187,13 @@ const message = {
   text: 'A\nB',
   id: 'fixture-id',
 };
+test('SMTP切换：只验证登录，不发送邮件；验证失败不会冒充成功', async () => {
+  const server=fixture();
+  assert.deepEqual(await deliverSmtp(account({security:'tls'}),'fixture-key',null,server.connect,{authenticateOnly:true}),{authenticated:true});
+  assert.equal(server.commands.some(c=>c.line.startsWith('MAIL FROM:')||c.line==='DATA'),false);
+  const denied=fixture({authFailure:true});
+  await assert.rejects(deliverSmtp(account({security:'tls'}),'fixture-key',null,denied.connect,{authenticateOnly:true}),/SMTP 登录验证失败/);
+});
 test('SMTP协议：自定义TLS端口，自动协商PLAIN并发送UTF8正文', async () => {
   const server = fixture();
   assert.equal(

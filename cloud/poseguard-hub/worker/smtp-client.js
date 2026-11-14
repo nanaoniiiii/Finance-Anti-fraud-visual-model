@@ -90,7 +90,7 @@ export async function deliverSmtp(
   password,
   message,
   connectSocket,
-  { timeoutMs = 18000 } = {}
+  { timeoutMs = 18000, authenticateOnly = false } = {}
 ) {
   let socket,
     channel,
@@ -164,6 +164,10 @@ export async function deliverSmtp(
         await channel.reply([334]);
         await channel.send(ascii64(password));
         await channel.reply([235]);
+      }
+      if (authenticateOnly) {
+        try { await channel.send('QUIT'); } catch {}
+        return { authenticated: true };
       }
       await channel.send(`MAIL FROM:<${email(config.from)}>`);
       await channel.reply([250]);

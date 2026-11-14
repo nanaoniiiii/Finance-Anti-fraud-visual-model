@@ -1,5 +1,6 @@
 import { defaultMail, now, parse, readSetting, uid } from './utils.js';
 import { emitChange, processJobs } from './notify.js';
+import { mailConfigured } from './mail.js';
 const faultModes = new Set([
   'inference_unavailable',
   'inference_stalled',
@@ -64,6 +65,7 @@ async function transition(env, device, state, detail, ctx) {
     timestamp: Date.now(),
   };
   const mail = { ...defaultMail, ...(await readSetting(env, 'mail', {})) };
+  const configured = await mailConfigured(env, mail);
   const jobs = [];
   for (const address of mail.recipients || [])
     jobs.push({
@@ -74,7 +76,7 @@ async function transition(env, device, state, detail, ctx) {
         subject: `【PoseGuard】${title}`,
         text: `${message}\n时间：${occurred}\n详情：${env.PUBLIC_ORIGIN}/devices`,
       },
-      status: mail.enabled && mail.password_cipher ? 'pending' : 'blocked',
+      status: mail.enabled && configured ? 'pending' : 'blocked',
     });
   const subs = (await env.DB.prepare('SELECT * FROM push_subscriptions').all())
     .results;

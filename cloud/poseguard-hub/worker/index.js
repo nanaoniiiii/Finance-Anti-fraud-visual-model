@@ -47,8 +47,11 @@ import {
   queueEventNotifications,
   validateSubscription,
 } from './notify.js';
-import { sendSmtp } from './smtp.js';
+import { sendMail } from './mail.js';
+import { verifySmtp } from './smtp.js';
 import { mailSettings, updateMailSettings } from './mail-config.js';
+import { agentlyCall, publicAgently } from './agently-room.js';
+export { AgentlyMailRoom } from './agently-room.js';
 import { enrollReceiver, mobileRoute } from './native-receivers.js';
 import { updateDeviceState, checkOfflineDevices } from './device-status.js';
 import { connectPreview, cameraRoute, revokePreview } from './preview-room.js';
@@ -80,10 +83,14 @@ function requireEvent(event) {
 }
 async function publicSettings(env) {
   const mail = mailSettings(await readSetting(env, 'mail', {}));
+  const agently = publicAgently(await readSetting(env, 'mail_agently', null));
   return {
     rules: await readSetting(env, 'rules', defaultRules),
     mail: {
       ...mail,
+      smtp_from: mail.from,
+      from: mail.provider === 'agently' ? agently.email : mail.from,
+      agently,
       password_set: !!mail.password_cipher,
       password_cipher: undefined,
     },
@@ -898,17 +905,38 @@ async function route(request, env, ctx) {
   }
   if (path === '/api/settings' && method === 'GET')
     return json(await publicSettings(env));
+  if (path === '/api/settings/agently/connect' && method === 'POST') {
+    ownerOnly(user);
+    const result = await agentlyCall(
+      env,
+      'install',
+      await body(request, 65000)
+    );
+    await audit(env, user.email, 'agently_connected', result.email);
+    return json(result);
+  }
+  if (path === '/api/settings/agently/verify' && method === 'POST') {
+    ownerOnly(user);
+    const result = await agentlyCall(env, 'verify', { refresh: true });
+    await audit(env, user.email, 'agently_refreshed', result.email);
+    return json(result);
+  }
   if (path === '/api/settings' && method === 'PUT') {
     ownerOnly(user);
     const input = await body(request, 24000);
     if (input.rules)
       await saveSetting(env, 'rules', validateRules(input.rules));
     if (input.mail) {
+      const previous = mailSettings(await readSetting(env, 'mail', {}));
       const mail = await updateMailSettings(
         env,
-        await readSetting(env, 'mail', {}),
+        previous,
         input.mail
       );
+      const changedSmtp = ['provider', 'host', 'port', 'security', 'auth', 'username', 'password_cipher'].some(key => mail[key] !== previous[key]);
+      // Verify new active credentials before replacing a working mail channel.
+      // Authentication only: no email is sent by this check.
+      if (mail.provider === 'smtp' && mail.enabled && (!previous.enabled || changedSmtp)) await verifySmtp(env, mail);
       await saveSetting(env, 'mail', mail);
     }
     await audit(env, user.email, 'settings_updated', 'settings', {
@@ -925,7 +953,7 @@ async function route(request, env, ctx) {
     if (!mail.recipients.includes(target) && target !== user.email)
       throw new ApiError(400, '请先添加收件人');
     const id = uid();
-    await sendSmtp(
+    await sendMail(
       env,
       target,
       '【PoseGuard】发信配置测试',

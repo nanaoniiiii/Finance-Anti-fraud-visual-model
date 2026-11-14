@@ -4,6 +4,7 @@ import {
   email,
   encrypt,
   integer,
+  readSetting,
   text,
 } from './utils.js';
 
@@ -61,6 +62,15 @@ export async function updateMailSettings(env, previous, input) {
     throw new ApiError(400, '收件人须为邮箱列表');
   const recipients = [...new Set(merged.recipients.map(email))];
   if (recipients.length > 20) throw new ApiError(400, '收件人最多 20 个');
+  const provider = input.provider ?? previous.provider;
+  if (!['smtp', 'agently'].includes(provider))
+    throw new ApiError(400, '发信通道不正确');
+  if (provider === 'agently') {
+    const account = await readSetting(env, 'mail_agently', null);
+    if (merged.enabled && (!account?.credentials_cipher || !recipients.length))
+      throw new ApiError(409, '启用通知前，请先连接 Agent Mail 并添加收件人');
+    return { ...previous, provider, enabled: merged.enabled, recipients };
+  }
   const mail = validateSmtp(
     {
       provider: 'smtp',

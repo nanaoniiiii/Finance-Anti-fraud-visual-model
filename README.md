@@ -4,6 +4,8 @@
 
 **1.3.1** 将邮件通知改为通用 SMTP 接入：独立配置服务器、端口、TLS/STARTTLS及认证方式，支持独立登录名和密码/授权码；网页与Android App同步更新。见[验证记录](docs/smtp-validation-2026-11-15.md)和[1.3.1更新包](https://github.com/nanaoniiiii/Finance-Anti-fraud-visual-model/releases/tag/poseguard-v1.3.1)。
 
+**1.4.1** 增加 Agent Mail 云端发信与授权续期，同时保留通用 SMTP。修复后台同步覆盖设置表单输入的问题：未保存的邮箱、通道、收件人、授权码及规则会保留，保存失败可继续修改。网页与 Android 同步更新。见[验证记录](docs/mail-settings-validation-2026-11-15.md)和[1.4.1 更新包](https://github.com/nanaoniiiii/Finance-Anti-fraud-visual-model/releases/tag/poseguard-v1.4.1)。
+
 **1.3.0** 增加网页/App 按需实时预览、右上检测状态、骨架与FPS切换，以及检测前自动/0°/90°/180°/270°安装方向校正。使用方法见[预览与方向说明](docs/PREVIEW.zh-CN.md)，实测范围见[验证记录](docs/preview-validation-2026-11-15.md)，安装包见[1.3.0 发布](https://github.com/nanaoniiiii/Finance-Anti-fraud-visual-model/releases/tag/poseguard-v1.3.0)。
 
 XIAO ESP32-S3 Sense 使用1.3.0相机预览包；通用ESP32-S3纯接入网络固件保留 [1.2.2 发布](https://github.com/nanaoniiiii/Finance-Anti-fraud-visual-model/releases/tag/esp32s3-v1.2.2)。设备使用 DHCP、域名和设备密钥上报，IP 变化后保留原绑定。

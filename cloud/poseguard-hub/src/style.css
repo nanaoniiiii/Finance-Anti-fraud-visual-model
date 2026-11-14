@@ -1381,6 +1381,25 @@ p {
 .span-two {
   grid-column: span 2;
 }
+.mail-service-status {
+  padding: 18px;
+  border: 1px solid #dce6d0;
+  border-radius: 12px;
+  background: #f6f9f2;
+  color: #2d4233;
+  overflow-wrap: anywhere;
+}
+.mail-service-status p,
+.mail-service-status small {
+  display: block;
+  color: #6f7d75;
+  font-size: 13px;
+  line-height: 1.65;
+  margin: 8px 0;
+}
+.mail-service-status .button {
+  margin-top: 8px;
+}
 .checkbox-line {
   display: flex;
   align-items: flex-start;

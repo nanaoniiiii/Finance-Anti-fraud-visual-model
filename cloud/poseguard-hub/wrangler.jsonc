@@ -40,6 +40,10 @@
       {
         "name": "PREVIEWS",
         "class_name": "PreviewRoom"
+      },
+      {
+        "name": "MAIL_AUTH",
+        "class_name": "AgentlyMailRoom"
       }
     ]
   },
@@ -55,6 +59,10 @@
       "new_sqlite_classes": [
         "PreviewRoom"
       ]
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": ["AgentlyMailRoom"]
     }
   ],
   "triggers": {

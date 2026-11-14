@@ -4,6 +4,12 @@ import { mailSettings, validateSmtp } from './mail-config.js';
 import { deliverSmtp } from './smtp-client.js';
 export { mimeMessage } from './smtp-client.js';
 
+export async function verifySmtp(env, mail) {
+  const config = validateSmtp(mail);
+  if (!config.password_cipher || !config.from) throw new ApiError(409, '请填写 SMTP 发件账号和授权码');
+  return deliverSmtp(config, await decrypt(env, config.password_cipher), null, connect, { authenticateOnly: true });
+}
+
 export async function sendSmtp(
   env,
   to,

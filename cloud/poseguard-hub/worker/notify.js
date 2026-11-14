@@ -11,7 +11,7 @@ import {
   riskLabels,
   uid,
 } from './utils.js';
-import { sendSmtp } from './smtp.js';
+import { mailConfigured, sendMail } from './mail.js';
 
 export function validateSubscription(subscription) {
   let url;
@@ -67,6 +67,7 @@ export async function emitChange(env, category, entityId, action, data) {
 }
 export async function queueEventNotifications(env, event, change) {
   const mail = { ...defaultMail, ...(await readSetting(env, 'mail', {})) };
+  const configured = await mailConfigured(env, mail);
   const title = `${event.severity >= 3 ? '请求工作人员介入' : levelLabels[event.severity]} · ${riskLabels[event.risk_kind] || '设备事件'}`;
   const body = `${event.device_name || event.device_id}：累计 ${event.observed_frames} 帧${event.model_state === 'candidate' ? '候选' : '特殊'}状态。请人工核查。`;
   const payload = {
@@ -87,7 +88,7 @@ export async function queueEventNotifications(env, event, change) {
         subject: `【PoseGuard】${title}`,
         text: `${title}\n\n设备：${event.device_name || event.device_id}\n位置：${event.location || '未设置'}\n风险：${riskLabels[event.risk_kind]}\n风险程度：${levelLabels[event.severity]}\n模型状态：${event.model_state === 'candidate' ? '候选（需核查）' : '已确认姿态'}\n累计特殊帧：${event.observed_frames}\n发生时间：${event.occurred_at}\n接收时间：${event.received_at}\n\n详情：${env.PUBLIC_ORIGIN}${payload.url}\n\n本消息为视觉辅助预警，请工作人员结合现场情况核查。`,
       },
-      status: mail.enabled && mail.password_cipher ? 'pending' : 'blocked',
+      status: mail.enabled && configured ? 'pending' : 'blocked',
     });
   const subscriptions = (
     await env.DB.prepare('SELECT * FROM push_subscriptions').all()
@@ -144,7 +145,7 @@ export async function processJobs(env) {
         const payload = parse(job.payload_json, {});
         let providerId = job.id;
         if (job.channel === 'email') {
-          providerId = await sendSmtp(
+          providerId = await sendMail(
             env,
             job.target,
             payload.subject,
@@ -198,19 +199,25 @@ export async function processJobs(env) {
           .run();
       } catch (error) {
         const message = String(error.message || '通知发送失败').slice(0, 240);
-        const retry = job.attempts < 5 && error.code !== 'mail_not_configured';
+        const limited = error.status === 429;
+        const needsAuthorization = [
+          'mail_not_configured',
+          'mail_reauthorization_required',
+          'mail_confirmation_required',
+        ].includes(error.code);
+        const retry = limited || (job.attempts < 5 && !needsAuthorization);
         await env.DB.prepare(
-          'UPDATE notification_jobs SET status=?,next_attempt=?,last_error=?,updated_at=?,lease_until=0 WHERE id=?'
+          'UPDATE notification_jobs SET status=?,next_attempt=?,last_error=?,updated_at=?,attempts=?,lease_until=0 WHERE id=?'
         )
           .bind(
-            error.code === 'mail_not_configured'
-              ? 'blocked'
-              : retry
-                ? 'pending'
-                : 'failed',
-            seconds + Math.min(3600, 30 * 2 ** job.attempts),
+            needsAuthorization ? 'blocked' : retry ? 'pending' : 'failed',
+            seconds +
+              (limited
+                ? Math.max(10, Number(error.retryAfter) || 60)
+                : Math.min(3600, 30 * 2 ** job.attempts)),
             message,
             now(),
+            limited ? Math.max(0, job.attempts - 1) : job.attempts,
             job.id
           )
           .run();
