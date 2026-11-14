@@ -48,6 +48,7 @@ import {
   validateSubscription,
 } from './notify.js';
 import { sendSmtp } from './smtp.js';
+import { mailSettings, updateMailSettings } from './mail-config.js';
 import { enrollReceiver, mobileRoute } from './native-receivers.js';
 import { updateDeviceState, checkOfflineDevices } from './device-status.js';
 import { connectPreview, cameraRoute, revokePreview } from './preview-room.js';
@@ -78,7 +79,7 @@ function requireEvent(event) {
   return event;
 }
 async function publicSettings(env) {
-  const mail = { ...defaultMail, ...(await readSetting(env, 'mail', {})) };
+  const mail = mailSettings(await readSetting(env, 'mail', {}));
   return {
     rules: await readSetting(env, 'rules', defaultRules),
     mail: {
@@ -903,31 +904,11 @@ async function route(request, env, ctx) {
     if (input.rules)
       await saveSetting(env, 'rules', validateRules(input.rules));
     if (input.mail) {
-      const previous = {
-        ...defaultMail,
-        ...(await readSetting(env, 'mail', {})),
-      };
-      const mail = {
-        ...previous,
-        ...input.mail,
-        password_cipher: previous.password_cipher,
-      };
-      delete mail.password;
-      delete mail.password_set;
-      mail.from = email(mail.from);
-      mail.username = email(mail.username);
-      mail.recipients = [...new Set((mail.recipients || []).map(email))];
-      if (mail.recipients.length > 20)
-        throw new ApiError(400, '收件人最多 20 个');
-      mail.host = text(mail.host, 200);
-      integer(mail.port, 465, 587);
-      if (![465, 587].includes(mail.port))
-        throw new ApiError(400, '支持 465 TLS 或 587 STARTTLS');
-      if (input.mail.password)
-        mail.password_cipher = await encrypt(
-          env,
-          text(input.mail.password, 500)
-        );
+      const mail = await updateMailSettings(
+        env,
+        await readSetting(env, 'mail', {}),
+        input.mail
+      );
       await saveSetting(env, 'mail', mail);
     }
     await audit(env, user.email, 'settings_updated', 'settings', {
@@ -949,7 +930,8 @@ async function route(request, env, ctx) {
       target,
       '【PoseGuard】发信配置测试',
       `这是一封由管理员主动触发的发信测试。\n\n服务：${env.PUBLIC_ORIGIN}\n时间：${now()}\n\n此消息不代表真实风险事件。`,
-      id
+      id,
+      { test: true }
     );
     await audit(env, user.email, 'test_email_accepted', target);
     return json({

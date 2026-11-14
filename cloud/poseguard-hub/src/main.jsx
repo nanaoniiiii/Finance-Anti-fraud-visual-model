@@ -2343,7 +2343,11 @@ function SettingsPage({ settings, user, notify, reload }) {
                 recipients: recipients.split(/[\s,;，；]+/).filter(Boolean),
               },
             };
-      await api('/settings', { method: 'PUT', body: JSON.stringify(input) });
+      const result = await api('/settings', {
+        method: 'PUT',
+        body: JSON.stringify(input),
+      });
+      if (kind === 'mail') setMail({ ...result.mail, password: '' });
       notify(
         kind === 'rules' ? '规则已保存，设备心跳时同步' : '发信设置已保存'
       );
@@ -2463,12 +2467,20 @@ function SettingsPage({ settings, user, notify, reload }) {
       <section className="panel settings-panel">
         <PanelHeader
           title="邮箱通知"
-          subtitle="使用你指定的 Gmail 发件账号；登录信息只由管理员设置"
+          subtitle="通用 SMTP 接入；按邮箱或发信服务商提供的参数配置"
           action={
             <Badge
-              type={mail.enabled && mail.password_set ? 'green' : 'orange'}
+              type={
+                settings.mail.enabled && settings.mail.password_set
+                  ? 'green'
+                  : 'orange'
+              }
             >
-              {mail.enabled && mail.password_set ? '已配置' : '待完成邮箱授权'}
+              {settings.mail.password_set
+                ? settings.mail.enabled
+                  ? '自动通知已启用'
+                  : '已配置 · 自动通知关闭'
+                : '待配置发信凭据'}
             </Badge>
           }
         />
@@ -2486,38 +2498,71 @@ function SettingsPage({ settings, user, notify, reload }) {
             <label>
               SMTP 登录账号
               <input
-                type="email"
+                type="text"
+                autoComplete="off"
                 value={mail.username}
                 disabled={!owner}
                 onChange={(e) => setMail({ ...mail, username: e.target.value })}
               />
               <small>
-                若发件地址是已验证别名，填写有发送权限的 Gmail 登录账号。
+                填写服务商提供的登录名，可以是邮箱、独立用户名或 API 账号。
               </small>
             </label>
             <label>
               SMTP 服务器
               <input
+                placeholder="smtp.example.com"
                 value={mail.host}
                 disabled={!owner}
                 onChange={(e) => setMail({ ...mail, host: e.target.value })}
               />
             </label>
             <label>
-              加密端口
-              <select
+              SMTP 端口
+              <input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={65535}
                 value={mail.port}
                 disabled={!owner}
                 onChange={(e) =>
                   setMail({ ...mail, port: Number(e.target.value) })
                 }
+              />
+              <small>
+                常用 465 或 587，也可填写服务商的自定义端口；云端不支持 25。
+              </small>
+            </label>
+            <label>
+              连接加密
+              <select
+                value={
+                  mail.security || (mail.port === 587 ? 'starttls' : 'tls')
+                }
+                disabled={!owner}
+                onChange={(e) => setMail({ ...mail, security: e.target.value })}
               >
-                <option value={465}>465 · TLS</option>
-                <option value={587}>587 · STARTTLS</option>
+                <option value="tls">TLS · 建立连接时加密</option>
+                <option value="starttls">STARTTLS · 连接后升级加密</option>
               </select>
+              <small>与端口分别设置，以服务商文档为准。</small>
+            </label>
+            <label>
+              认证方式
+              <select
+                value={mail.auth || 'auto'}
+                disabled={!owner}
+                onChange={(e) => setMail({ ...mail, auth: e.target.value })}
+              >
+                <option value="auto">自动 · 协商 LOGIN / PLAIN</option>
+                <option value="login">LOGIN</option>
+                <option value="plain">PLAIN</option>
+              </select>
+              <small>通常选择自动；登录信息在加密连接内发送。</small>
             </label>
             <label className="span-two">
-              Gmail 应用专用密码
+              SMTP 密码 / 授权码
               <input
                 type="password"
                 autoComplete="new-password"
@@ -2526,13 +2571,13 @@ function SettingsPage({ settings, user, notify, reload }) {
                 onChange={(e) => setMail({ ...mail, password: e.target.value })}
                 placeholder={
                   mail.password_set
-                    ? '已设置；留空保留原授权码'
-                    : '填写 Gmail 应用专用密码'
+                    ? '已设置；同一服务器和账号下留空保留'
+                    : '填写服务商提供的密码、授权码或 SMTP API Key'
                 }
               />
               <small>
-                在 Gmail / Google 账号中创建应用专用密码；发件别名应已在 Gmail
-                中获得授权。
+                使用服务商为 SMTP 提供的凭据；发件地址需有发送权限。
+                更换服务器、登录账号或认证方式后，请填写对应的新凭据。
               </small>
             </label>
             <label className="span-two">
@@ -2558,11 +2603,20 @@ function SettingsPage({ settings, user, notify, reload }) {
             启用自动邮箱通知
           </label>
           <div className="settings-footer">
-            <span>邮件状态“服务已接受”表示发信服务接受了请求。</span>
+            <span>
+              测试使用已保存配置，可在自动通知关闭时发送。“服务已接受”表示发信服务接受了请求。
+            </span>
             <div className="inline">
               <Button
                 icon={Mail}
-                disabled={!owner || !mail.password_set || !mail.enabled}
+                disabled={
+                  !owner ||
+                  !settings.mail.password_set ||
+                  !!mail.password ||
+                  ['host', 'port', 'security', 'auth', 'username', 'from'].some(
+                    (key) => mail[key] !== settings.mail[key]
+                  )
+                }
                 busy={saving === 'test'}
                 onClick={async () => {
                   setSaving('test');

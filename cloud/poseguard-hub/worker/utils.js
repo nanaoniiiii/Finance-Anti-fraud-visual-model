@@ -32,8 +32,10 @@ export const defaultRules = {
 };
 export const defaultMail = {
   provider: 'smtp',
-  host: 'smtp.gmail.com',
+  host: '',
   port: 465,
+  security: 'tls',
+  auth: 'auto',
   tls: true,
   username: '',
   from: '',
