@@ -47,6 +47,7 @@ def main() -> int:
     }
     if args.validation_report:
         files['validation.md'] = args.validation_report
+        files[args.validation_report.name] = args.validation_report
     if args.relay:
         files['bin/poseguard-relay'] = args.relay
         files['service/S99poseguardcloud'] = platform / 'service/S99poseguardcloud'
