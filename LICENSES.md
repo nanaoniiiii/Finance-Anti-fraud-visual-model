@@ -35,6 +35,14 @@ This file records dependencies used by the Windows prototype. It is not legal ad
 - GStreamer, GLib, MPP, the C/C++ runtime and Weston are dynamically used from the target firmware; they are not copied into this deployment bundle.
 - Calibration frames, user-supplied regression videos and identifiable screenshots are excluded from the public release. Small functional regressions are not representative accuracy certification.
 
+## Preview transport dependencies (1.3.0)
+
+- `github.com/coder/websocket` v1.8.15: ISC license, https://github.com/coder/websocket . Its license is supplied with relay bundles.
+- `websocket-client` 1.9.0: Apache-2.0, https://github.com/websocket-client/websocket-client . Used by Windows/MaixCAM preview adapters.
+- OkHttp 5.3.2, Okio and Kotlin runtime: Apache-2.0, https://github.com/square/okhttp . Android uses the Gradle-pinned dependency and default certificate verification.
+- ArduinoWebsockets 0.5.4: GPL-3.0, https://github.com/gilmaimon/ArduinoWebsockets . The Sense firmware bundle supplies the license, library source and matching application source/build instructions.
+- `ws` 8.21.0: MIT, https://github.com/websockets/ws . Used by protocol and real-cloud verification tools, not bundled in device firmware.
+
 ## Project-owned implementation
 
 The following are original project components: backend-neutral records, lightweight track association, pose geometry, temporal risk state machine, event transition logic, privacy-preserving JSONL schema, runtime configuration, and overlay composition.

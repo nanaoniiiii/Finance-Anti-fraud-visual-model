@@ -19,6 +19,7 @@ from poseguard.tracking.observation_filter import PoseObservationFilter
 from poseguard.tracking.person_tracks import PersonTrackManager
 from poseguard.types import RiskDecision, RiskState
 from poseguard.ui.overlay import OverlayRenderer, is_exit_key
+from poseguard.cloud.orientation import CameraOrientation
 
 
 class ResilientPhoneBackend:
@@ -126,6 +127,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--max-frames", type=int, default=None)
     parser.add_argument("--cloud-config", default=None, help="bound device configuration; enables local evidence and cloud relay")
+    parser.add_argument("--camera-rotation", choices=['auto','0','90','180','270'], default='auto')
+    parser.add_argument("--camera-mirror", action='store_true')
     return parser
 
 
@@ -173,6 +176,9 @@ def run(args: argparse.Namespace) -> int:
     cloud_monitor = None
     cloud_health = {"mode": "starting", "fps": 0.0, "people": 0, "source": str(source)}
     cloud_frame = None
+    preview = None
+    orientation = CameraOrientation(getattr(args,'camera_rotation','auto'),getattr(args,'camera_mirror',False))
+    previous_direction = None
     if getattr(args, "cloud_config", None):
         from poseguard.cloud.edge import CloudRelay, IncidentMonitor
 
@@ -191,7 +197,19 @@ def run(args: argparse.Namespace) -> int:
                 crop = cv2.resize(crop, (max(1, int(crop.shape[1]*factor)), max(1, int(crop.shape[0]*factor))), interpolation=cv2.INTER_AREA)
             return cv2.imwrite(destination, crop, [cv2.IMWRITE_JPEG_QUALITY, 75])
 
-        cloud_relay = CloudRelay(args.cloud_config, health=lambda: dict(cloud_health)).start()
+        from poseguard.cloud.preview import PreviewPublisher
+        def encode_preview(image, profile):
+            original_height, original_width = image.shape[:2]
+            ratio = min(1.0,profile['long_side']/max(original_width,original_height))
+            if ratio < 1:
+                image = cv2.resize(image,(max(16,int(original_width*ratio)),max(16,int(original_height*ratio))),interpolation=cv2.INTER_AREA)
+            ok, jpeg = cv2.imencode('.jpg',image,[cv2.IMWRITE_JPEG_QUALITY,profile['quality']])
+            if not ok: raise RuntimeError('Preview JPEG encoding failed')
+            return jpeg.tobytes(), image.shape[1], image.shape[0], original_width, original_height
+        cloud_relay = CloudRelay(args.cloud_config, health=lambda: dict(cloud_health))
+        preview = PreviewPublisher(cloud_relay.config,encode_preview,lambda f:f.copy()).start()
+        cloud_health['capabilities'] = dict(preview=True,pose_overlay=True,camera_orientation=True)
+        cloud_relay.start()
         cloud_monitor = IncidentMonitor(cloud_relay.directory, cloud_relay.config.get("rules"), snapshot=capture_person)
 
     try:
@@ -217,7 +235,21 @@ def run(args: argparse.Namespace) -> int:
                          if video_rate and video_rate > 0 else time.monotonic())
 
             inference_start = time.perf_counter()
-            observations = pose_backend.infer(frame)
+            camera_settings = preview.camera() if preview else dict(rotation=orientation.mode,mirror=orientation.mirror,version=0)
+            orientation.configure(camera_settings['rotation'],camera_settings['mirror'])
+            def rotate_input(image, degrees, mirror):
+                if degrees:
+                    image = cv2.rotate(image,{90:cv2.ROTATE_90_CLOCKWISE,180:cv2.ROTATE_180,270:cv2.ROTATE_90_COUNTERCLOCKWISE}[degrees])
+                return cv2.flip(image,1) if mirror else image
+            frame, observations, _ = orientation.process(frame,time.monotonic(),pose_backend.infer,rotate_input)
+            direction = (orientation.rotation,orientation.mirror)
+            if previous_direction is not None and previous_direction != direction:
+                tracker = PersonTrackManager(**config['tracking'])
+                engine = RiskRuleEngine(**config['risk'])
+                previous_alerts.clear()
+                if cloud_monitor: cloud_monitor.reset('camera_orientation_changed')
+            previous_direction = direction
+            if preview: preview.apply(camera_settings,*direction)
             observations = observation_filter.filter(
                 observations,
                 (frame.shape[1], frame.shape[0]),
@@ -267,6 +299,9 @@ def run(args: argparse.Namespace) -> int:
             instantaneous_fps = 1.0 / max(now - previous_frame_time, 1e-6)
             fps = instantaneous_fps if fps == 0 else fps * 0.85 + instantaneous_fps * 0.15
             previous_frame_time = now
+            if preview:
+                preview.submit(frame,tracks,decisions,fps,processed_frames,camera=camera_settings,
+                    rotation=orientation.rotation,mirror=orientation.mirror,source_type='video' if isinstance(source,str) else 'camera')
 
             if config["display"]["enabled"]:
                 canvas = renderer.render(
@@ -289,6 +324,8 @@ def run(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     finally:
+        if preview is not None:
+            preview.close()
         if cloud_monitor is not None:
             cloud_monitor.reset("application_stopped")
         if cloud_relay is not None:

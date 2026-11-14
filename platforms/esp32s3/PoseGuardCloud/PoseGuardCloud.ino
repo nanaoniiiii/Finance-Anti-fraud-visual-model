@@ -1,3 +1,6 @@
+#if defined(POSEGUARD_CAMERA_XIAO)
+#include <ArduinoWebsockets.h>
+#endif
 #include <Preferences.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
@@ -6,9 +9,13 @@
 
 #include "PoseGuardCloud.h"
 #include "RootCA.h"
+#include "CameraPreview.h"
 
 namespace {
 PoseGuardCloud cloud;
+#if defined(POSEGUARD_CAMERA_XIAO)
+SenseCameraPreview cameraPreview;
+#endif
 bool ready = false;
 String configuredSsid;
 String configuredPassword;
@@ -223,8 +230,11 @@ void setup() {
                          configuredSelectAccessPoint);
   configTime(0, 0, "time.cloudflare.com", "pool.ntp.org", "ntp.aliyun.com");
   if (ready) xTaskCreate(networkTask, "pg-cloud", 16384, nullptr, 1, nullptr);
+#if defined(POSEGUARD_CAMERA_XIAO)
+  if (ready) cameraPreview.begin(cloud, POSEGUARD_ROOT_CA);
+#endif
   Serial.println(
-      "PoseGuard ESP32-S3 1.2.2 "
+      "PoseGuard ESP32-S3 1.3.0 "
       "已启动。可用命令：WIFI、TXPOWER、BIND、STATUS、SCAN、INIT_STORAGE");
 }
 

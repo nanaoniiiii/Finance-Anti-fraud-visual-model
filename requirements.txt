@@ -4,3 +4,4 @@ pillow==12.2.0
 pytest==9.0.3
 torch==2.13.0
 ultralytics==8.4.103
+websocket-client==1.9.0

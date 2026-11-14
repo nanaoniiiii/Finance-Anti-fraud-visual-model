@@ -1,5 +1,7 @@
 # RK3566 轻量版离线部署
 
+1.3.0 新增云端按需预览与自动/四角度安装方向，见[预览说明](../../docs/PREVIEW.zh-CN.md)。配置作用于模型输入，MIPI显示使用同一校正图像。
+
 适用：AArch64 Linux、Rockchip RK3566 NPU、GStreamer/MPP。模型为 YOLO11n-Pose 320×320 INT8，四路独立量化输出，C++17 完成本地姿态、多人跟踪、风险状态、JSONL 和网页预览。板端不需要 Python、PyTorch 或云端服务。
 
 ## 通过 USB 安装
@@ -7,7 +9,7 @@
 安装电脑端 Android platform-tools，连接板子的 USB 调试口。执行 `adb devices -l` 获取序列号。将本文件所在压缩包与源码中的 `platforms/rk3566/deploy-adb.ps1` 放在电脑上：
 
 ```powershell
-& .\deploy-adb.ps1 -Serial "你的设备序列号" -BundlePath ".\PoseGuard-RK3566-v1.2.0-aarch64.tar.gz"
+& .\deploy-adb.ps1 -Serial "你的设备序列号" -BundlePath ".\PoseGuard-RK3566-v1.3.0-aarch64.tar.gz"
 ```
 
 安装前核验整个包的 SHA-256，并在板上进行 NPU 模型冒烟测试。运行库放入 `/userdata/poseguard/lib`，通过应用私有路径加载。升级时备份旧文件并保留已有配置。
@@ -23,7 +25,7 @@ adb -s "你的设备序列号" forward tcp:18081 tcp:8081
 ## 已在 Linux 板上解压
 
 ```sh
-gzip -dc PoseGuard-RK3566-v1.2.0-aarch64.tar.gz | tar -xf -
+gzip -dc PoseGuard-RK3566-v1.3.0-aarch64.tar.gz | tar -xf -
 cd poseguard-rk3566
 sh install.sh
 ```

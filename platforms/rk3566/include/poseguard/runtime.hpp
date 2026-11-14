@@ -23,6 +23,8 @@ struct RuntimeConfig {
   bool http_enabled{true};
   bool display_enabled{false};
   bool loop_video{false};
+  std::string camera_rotation{"auto"};
+  bool camera_mirror{false};
   CoreConfig core{};
 };
 

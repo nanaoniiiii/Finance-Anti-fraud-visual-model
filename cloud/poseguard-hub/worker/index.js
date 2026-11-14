@@ -50,6 +50,8 @@ import {
 import { sendSmtp } from './smtp.js';
 import { enrollReceiver, mobileRoute } from './native-receivers.js';
 import { updateDeviceState, checkOfflineDevices } from './device-status.js';
+import { connectPreview, cameraRoute, revokePreview } from './preview-room.js';
+export { PreviewRoom } from './preview-room.js';
 
 const list = async (statement) => (await statement.all()).results;
 const publicUser = (user) => ({
@@ -450,6 +452,8 @@ async function route(request, env, ctx) {
     return claimDevice(request, env, await body(request, 16000));
   if (path.startsWith('/api/device/')) {
     const device = await deviceAuth(request, env);
+    if (path === '/api/device/preview/connect' && method === 'GET')
+      return connectPreview(request, env, device, 'publisher');
     if (path === '/api/device/heartbeat' && method === 'POST') {
       const input = await body(request, 20000);
       const health = {
@@ -496,6 +500,20 @@ async function route(request, env, ctx) {
   }
   if (path.startsWith('/api/mobile/')) return mobileRoute(request, env, url);
   const user = await userAuth(request, env);
+  const previewPath = path.match(
+    /^\/api\/devices\/([^/]+)\/(preview\/connect|camera)$/
+  );
+  if (previewPath) {
+    const device = await env.DB.prepare(
+      'SELECT * FROM devices WHERE id=? AND revoked_at IS NULL'
+    )
+      .bind(identifier(previewPath[1]))
+      .first();
+    if (!device) throw new ApiError(404, '设备不存在或已解除绑定');
+    if (previewPath[2] === 'camera')
+      return cameraRoute(request, env, user, device);
+    return connectPreview(request, env, device, 'viewer', user);
+  }
   if (path === '/api/native-receivers' && method === 'POST')
     return enrollReceiver(env, user, await body(request, 12000));
   const nativeTest = path.match(/^\/api\/native-receivers\/([^/]+)\/test$/);
@@ -677,6 +695,7 @@ async function route(request, env, ctx) {
       await env.DB.prepare('UPDATE devices SET revoked_at=? WHERE id=?')
         .bind(now(), id)
         .run();
+      await revokePreview(env, id);
       await audit(env, user.email, 'device_revoked', id);
       await emitChange(env, 'device', id, 'revoked', { device_id: id });
       return json({ ok: true });

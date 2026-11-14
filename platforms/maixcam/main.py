@@ -111,6 +111,10 @@ def parse_args(argv=None):
 
 def run(*, max_frames=0, no_display=False, test_timers=False, cloud_config=None):
     from maix import app, camera, display, image, nn
+    try:
+        from poseguard.cloud.orientation import CameraOrientation
+    except ImportError:
+        from cloud_orientation import CameraOrientation
 
     settings = dict(CONFIG)
     pipeline = build_pipeline(settings, test_timers=test_timers)
@@ -127,6 +131,9 @@ def run(*, max_frames=0, no_display=False, test_timers=False, cloud_config=None)
     cloud_relay = None
     cloud_monitor = None
     cloud_frame = None
+    preview = None
+    orientation = CameraOrientation()
+    previous_direction = None
     cloud_health = {"mode": "starting", "fps": 0.0, "people": 0, "source": "MaixCAM camera"}
     if cloud_config:
         try:
@@ -145,11 +152,24 @@ def run(*, max_frames=0, no_display=False, test_timers=False, cloud_config=None)
             cloud_frame.crop(left, top, right-left, bottom-top).save(destination)
             return True
 
-        cloud_relay = CloudRelay(cloud_config, health=lambda: dict(cloud_health)).start()
+        try:
+            from poseguard.cloud.preview import PreviewPublisher
+        except ImportError:
+            from cloud_preview import PreviewPublisher
+        def encode_preview(frame,profile):
+            width,height=frame.width(),frame.height()
+            factor=min(1.0,profile['long_side']/max(width,height))
+            resized=frame.resize(max(16,int(width*factor)),max(16,int(height*factor))) if factor<1 else frame
+            return bytes(resized.to_jpeg(quality=max(51,profile['quality'])).to_bytes()),resized.width(),resized.height(),width,height
+        cloud_relay = CloudRelay(cloud_config, health=lambda: dict(cloud_health))
+        preview = PreviewPublisher(cloud_relay.config,encode_preview,lambda f:f.copy()).start()
+        cloud_health['capabilities']=dict(preview=True,pose_overlay=True,camera_orientation=True)
+        cloud_relay.start()
         cloud_monitor = IncidentMonitor(cloud_relay.directory, cloud_relay.config.get("rules"), snapshot=capture_person)
 
     try:
-        detector = nn.YOLO11(model=settings["model_path"], dual_buff=True)
+        # Probes may have different rotations. Output must match this input.
+        detector = nn.YOLO11(model=settings["model_path"], dual_buff=False)
         width = int(detector.input_width())
         height = int(detector.input_height())
         if (width, height) != (320, 224):
@@ -180,12 +200,26 @@ def run(*, max_frames=0, no_display=False, test_timers=False, cloud_config=None)
             try:
                 frame = cam.read()
                 inference_started = time.monotonic()
-                objects = detector.detect(
-                    frame,
-                    conf_th=settings["pose_confidence"],
-                    iou_th=settings["pose_iou"],
-                    keypoint_th=settings["keypoint_threshold"],
-                )
+                camera_settings=preview.camera() if preview else dict(rotation=orientation.mode,mirror=orientation.mirror,version=0)
+                orientation.configure(camera_settings['rotation'],camera_settings['mirror'])
+                def rotate_input(frame,degrees,mirror):
+                    corrected=frame.rotate((360-degrees)%360) if degrees else frame
+                    # FlipDir.Y is the horizontal flip; X is vertical.
+                    return corrected.flip(image.FlipDir.Y) if mirror else corrected
+                def infer(frame):
+                    return list(detector.detect(frame,conf_th=settings['pose_confidence'],iou_th=settings['pose_iou'],keypoint_th=settings['keypoint_threshold']))
+                def records(objects):
+                    return [dict(bbox=(o.x,o.y,o.x+o.w,o.y+o.h),confidence=o.score,
+                        keypoints=[None if o.points[j]<0 or o.points[j+1]<0 else (o.points[j],o.points[j+1],1.0)
+                                   for j in range(0,34,2)]) for o in objects if len(o.points)==34]
+                frame,objects,_=orientation.process(frame,time.monotonic(),infer,rotate_input,records)
+                width,height=frame.width(),frame.height()
+                direction=(orientation.rotation,orientation.mirror)
+                if previous_direction is not None and previous_direction!=direction:
+                    pipeline.reset()
+                    if cloud_monitor: cloud_monitor.reset('camera_orientation_changed')
+                previous_direction=direction
+                if preview: preview.apply(camera_settings,*direction)
                 inference_ms = (
                     time.monotonic() - inference_started
                 ) * 1000.0
@@ -237,6 +271,9 @@ def run(*, max_frames=0, no_display=False, test_timers=False, cloud_config=None)
                     "observed": item["track_id"] in observed_ids} for item in decisions], timestamp=timestamp)
                 cloud_health.update(mode="running", fps=latest_metrics["fps"], people=people, last_error=cloud_monitor.last_error)
 
+            if preview:
+                preview.submit(frame,tracks,decisions,latest_metrics['fps'],frame_count,camera=camera_settings,
+                    rotation=orientation.rotation,mirror=orientation.mirror)
             if disp is not None:
                 renderer.render(frame, tracks, decisions, latest_metrics)
                 disp.show(frame)
@@ -253,6 +290,8 @@ def run(*, max_frames=0, no_display=False, test_timers=False, cloud_config=None)
                     flush=True,
                 )
     finally:
+        if preview is not None:
+            preview.close()
         if cloud_monitor is not None:
             cloud_monitor.reset("application_stopped")
         if cloud_relay is not None:

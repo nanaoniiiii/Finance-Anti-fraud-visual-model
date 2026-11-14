@@ -21,6 +21,8 @@ runs/*
 !runs/.gitkeep
 build/rk3566-*/
 build/esp32-host/
+build/esp32-tls-preview-test
+/Testing/
 platforms/rk3566/artifacts/
 platforms/rk3566/media/*.mp4
 platforms/rk3566/media/*.avi

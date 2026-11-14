@@ -2,7 +2,9 @@
 
 [云端管理台](https://poseguard.nanaoni.tech) 同时管理 Windows、RK3566、MaixCAM 和 ESP32-S3 接入端。安卓 App 和 iPhone 主屏幕网页可接收绑定设备的告警。默认累计同一人员、同一风险的候选及确认状态，第 101 帧上报。绑定、通知与部署见[多端云预警使用指南](docs/CLOUD.zh-CN.md)。
 
-ESP32-S3 的最新网络修复包见 [1.2.2 发布](https://github.com/nanaoniiiii/Finance-Anti-fraud-visual-model/releases/tag/esp32s3-v1.2.2)。设备使用 DHCP、域名和设备密钥上报，IP 变化后保留原绑定。
+**1.3.0** 增加网页/App 按需实时预览、右上检测状态、骨架与FPS切换，以及检测前自动/0°/90°/180°/270°安装方向校正。使用方法见[预览与方向说明](docs/PREVIEW.zh-CN.md)，实测范围见[验证记录](docs/preview-validation-2026-11-15.md)，安装包见[1.3.0 发布](https://github.com/nanaoniiiii/Finance-Anti-fraud-visual-model/releases/tag/poseguard-v1.3.0)。
+
+XIAO ESP32-S3 Sense 使用1.3.0相机预览包；通用ESP32-S3纯接入网络固件保留 [1.2.2 发布](https://github.com/nanaoniiiii/Finance-Anti-fraud-visual-model/releases/tag/esp32s3-v1.2.2)。设备使用 DHCP、域名和设备密钥上报，IP 变化后保留原绑定。
 
 PoseGuard 是一个本地运行的多人姿态跟踪与疑似风险行为辅助预警程序，可自主运行于弱网或离线环境，在端侧完成视觉处理与风险预警，无需另行部署本地服务器或云端服务器进行处理，从而减轻既有场所的改造、升级和调试成本。
 

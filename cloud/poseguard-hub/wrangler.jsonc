@@ -36,6 +36,10 @@
       {
         "name": "ROOMS",
         "class_name": "EventRoom"
+      },
+      {
+        "name": "PREVIEWS",
+        "class_name": "PreviewRoom"
       }
     ]
   },
@@ -44,6 +48,12 @@
       "tag": "v1",
       "new_sqlite_classes": [
         "EventRoom"
+      ]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": [
+        "PreviewRoom"
       ]
     }
   ],

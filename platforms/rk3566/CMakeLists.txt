@@ -6,7 +6,7 @@ option(POSEGUARD_BUILD_TESTS "Build host-side tests" OFF)
 option(POSEGUARD_ENABLE_BOARD "Build the RK3566 executable" ON)
 set(POSEGUARD_BOARD_SYSROOT "" CACHE PATH "Board rootfs containing target shared libraries")
 
-add_library(poseguard_core OBJECT src/core.cpp src/rknn_pose.cpp)
+add_library(poseguard_core OBJECT src/core.cpp src/rknn_pose.cpp src/camera.cpp)
 target_include_directories(
   poseguard_core
   PUBLIC
@@ -52,6 +52,7 @@ if(POSEGUARD_ENABLE_BOARD)
     src/cloud_incidents.cpp
     src/video_source.cpp
     src/display_sink.cpp
+    src/preview.cpp
   )
   target_link_libraries(poseguard-rk3566 PRIVATE poseguard_core)
   target_link_libraries(poseguard-rk3566 PRIVATE ${RKNN_RUNTIME_LIBRARY})
@@ -93,6 +94,7 @@ if(POSEGUARD_ENABLE_BOARD)
 endif()
 
 if(POSEGUARD_BUILD_TESTS)
+  find_package(Threads REQUIRED)
   enable_testing()
   add_executable(poseguard_types_test tests/test_main.cpp)
   target_link_libraries(poseguard_types_test PRIVATE poseguard_core)
@@ -122,4 +124,8 @@ if(POSEGUARD_BUILD_TESTS)
   target_compile_options(poseguard_cloud_test PRIVATE -UNDEBUG)
   target_link_libraries(poseguard_cloud_test PRIVATE poseguard_core)
   add_test(NAME poseguard_cloud COMMAND poseguard_cloud_test)
+  add_executable(poseguard_camera_test tests/test_camera.cpp src/preview.cpp)
+  target_compile_options(poseguard_camera_test PRIVATE -UNDEBUG)
+  target_link_libraries(poseguard_camera_test PRIVATE poseguard_core Threads::Threads)
+  add_test(NAME poseguard_camera COMMAND poseguard_camera_test)
 endif()

@@ -257,7 +257,7 @@ class CloudRelay:
                     pending = len(list((self.directory / "outbox").glob("*.json")))
                     response = self._post("/api/device/heartbeat", {**self.health(), "outbox_pending": pending,
                         "clock_synced": datetime.datetime.now().year >= 2024,
-                        "firmware": "poseguard-1.2.0"})
+                        "firmware": "poseguard-1.3.0"})
                     if response.get("rules"):
                         self.config["rules"] = response["rules"]
                         atomic_json(self.directory / "policy.json", response["rules"])

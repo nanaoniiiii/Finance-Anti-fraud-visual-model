@@ -24,19 +24,20 @@ import (
 	"time"
 )
 
-const version = "1.2.0"
+const version = "1.3.0"
 
 type Config struct {
-	Server    string `json:"server_url"`
-	ID        string `json:"device_id"`
-	Token     string `json:"device_token"`
-	Platform  string `json:"platform"`
-	Directory string `json:"data_directory"`
-	HealthURL string `json:"health_url,omitempty"`
-	Dial      string `json:"dial_address,omitempty"`
-	Reverse   string `json:"reverse_listen,omitempty"`
-	CAFile    string `json:"ca_file,omitempty"`
-	ctx       context.Context
+	Server     string `json:"server_url"`
+	ID         string `json:"device_id"`
+	Token      string `json:"device_token"`
+	Platform   string `json:"platform"`
+	Directory  string `json:"data_directory"`
+	HealthURL  string `json:"health_url,omitempty"`
+	PreviewURL string `json:"preview_url,omitempty"`
+	Dial       string `json:"dial_address,omitempty"`
+	Reverse    string `json:"reverse_listen,omitempty"`
+	CAFile     string `json:"ca_file,omitempty"`
+	ctx        context.Context
 }
 type apiError struct {
 	Status  int
@@ -245,6 +246,13 @@ func heartbeat(cl *http.Client, c Config) error {
 			if p, ok := status["tracks"]; ok {
 				health["people"] = p
 			}
+			if p, ok := status["preview"].(map[string]any); ok {
+				caps := health["capabilities"].(map[string]any)
+				caps["preview"] = true
+				caps["preview_codecs"] = p["codecs"]
+				caps["pose_overlay"] = p["pose"]
+				caps["camera_orientation"] = true
+			}
 		} else {
 			health["mode"] = "inference_unavailable"
 			health["last_error"] = "Local inference status is unavailable"
@@ -356,6 +364,9 @@ func run(c Config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	c.ctx = ctx
+	if c.Platform == "rk3566" || c.PreviewURL != "" {
+		go runPreview(ctx, c)
+	}
 	nextHeartbeat := time.Time{}
 	delay := time.Second
 	for {

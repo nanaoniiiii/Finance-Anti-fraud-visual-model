@@ -1,10 +1,13 @@
 # ESP32-S3 云端接入适配器
 
+1.3.0 增加 **XIAO ESP32-S3 Sense 相机预览**。通用构建保持接入适配器模式；只有明确启用 `POSEGUARD_CAMERA_XIAO` 时才驱动 Sense 相机引脚。未内置姿态模型，自动人体方向和骨架不可用，网页会明确显示；手动方向和镜像用于相机预览。见[预览说明](../../docs/PREVIEW.zh-CN.md)。
+
 `PoseGuardCloud/` 是 Arduino ESP32-S3 接入示例，支持一次性绑定、HTTPS 心跳、橙色与红色风险累计、本地事件和目标截图、持久上报队列、重试及工作人员介入命令。本示例不包含 YOLO11n-Pose MCU 推理；把真实检测器或可信本地网关的结果输入适配器。
 
 ## 已构建配置
 
 - Espressif Arduino Core 3.3.2，ArduinoJson 7.4.2。
+- Sense 预览另使用 ArduinoWebsockets 0.5.4，GPL-3.0 许可证及对应库源码随 Sense 固件包提供。
 - 目标 `esp32:esp32:esp32s3:PSRAM=opi,CDCOnBoot=cdc,USBMode=hwcdc,FlashSize=8M`，使用 8 MB Flash 和 8 MB OPI PSRAM。
 - 1.2.2 程序约 1.10 MB，静态 RAM 约 48 KB；准确值见对应版本构建记录。
 - 示例不操作 GPIO 电机、继电器或蜂鸣器，不假设摄像头接线。
@@ -17,6 +20,14 @@
 ```powershell
 arduino-cli compile --fqbn "esp32:esp32:esp32s3:PSRAM=opi,CDCOnBoot=cdc,USBMode=hwcdc,FlashSize=8M" platforms/esp32s3/PoseGuardCloud
 ```
+
+已确认 XIAO Sense 相机扩展板时，安装 ArduinoWebsockets 后构建：
+
+```powershell
+arduino-cli compile --fqbn "esp32:esp32:esp32s3:PSRAM=opi,CDCOnBoot=cdc,USBMode=hwcdc,FlashSize=8M" --build-property "compiler.cpp.extra_flags=-DPOSEGUARD_CAMERA_XIAO=1" --build-property "upload.maximum_size=2097152" platforms/esp32s3/PoseGuardCloud
+```
+
+保留项目 `partitions.csv`：应用2 MB，LittleFS从0x210000开始。Sense版本约1.22 MB程序、60 KB静态RAM，帧缓冲使用PSRAM。只在有人观看时初始化与采集相机，租约结束后关闭。默认320×240，清晰档640×480，最多3 FPS。相机引脚对应 Seeed 的 XIAO ESP32-S3 Sense 定义，不用于其他ESP32相机板。已有同布局安装可只升级0x10000应用区，保留NVS与LittleFS。
 
 发布包同时提供应用、bootloader 和分区文件。烧录前确认芯片、Flash、PSRAM 和 USB 模式，并完整备份原有 Flash；不要把含 NVS/Wi-Fi 信息的原固件备份上传到公开仓库。不同硬件的 USB CDC、Flash 大小和 PSRAM 模式可能需要调整构建选项。
 

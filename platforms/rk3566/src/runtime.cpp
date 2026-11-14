@@ -3,6 +3,8 @@
 #include "poseguard/rknn_pose.hpp"
 #include "poseguard/video_source.hpp"
 #include "poseguard/cloud_incidents.hpp"
+#include "poseguard/camera.hpp"
+#include "poseguard/preview.hpp"
 
 #include <algorithm>
 #include <array>
@@ -297,6 +299,8 @@ RuntimeConfig load_runtime_config(const std::string& path) {
     else if (key == "http_enabled") config.http_enabled = parse_bool(value);
     else if (key == "display_enabled") config.display_enabled = parse_bool(value);
     else if (key == "loop_video") config.loop_video = parse_bool(value);
+    else if (key == "camera_rotation") config.camera_rotation = value;
+    else if (key == "camera_mirror") config.camera_mirror = parse_bool(value);
     else if (key == "phone_alert_seconds")
       config.core.phone_alert_seconds = std::stod(value);
     else if (key == "multi_person_alert_seconds")
@@ -370,7 +374,7 @@ Frame draw_overlay(const Frame& frame, const std::vector<TrackState>& tracks,
       const auto& first = track.keypoints[static_cast<std::size_t>(bone.first)];
       const auto& second =
           track.keypoints[static_cast<std::size_t>(bone.second)];
-      if (first.valid && second.valid) {
+      if (first.valid && second.valid && first.confidence >= .45F && second.confidence >= .45F) {
         draw_line(canvas, static_cast<int>(std::lround(first.x)),
                   static_cast<int>(std::lround(first.y)),
                   static_cast<int>(std::lround(second.x)),
@@ -378,7 +382,7 @@ Frame draw_overlay(const Frame& frame, const std::vector<TrackState>& tracks,
       }
     }
     for (const auto& point : track.keypoints) {
-      if (point.valid) {
+      if (point.valid && point.confidence >= .45F) {
         draw_dot(canvas, static_cast<int>(std::lround(point.x)),
                  static_cast<int>(std::lround(point.y)), color);
       }
@@ -525,7 +529,8 @@ std::string status_json(const std::string& input_state,
                         const std::string& active_source,
                         const std::vector<TrackState>& tracks,
                         const std::vector<RiskDecision>& decisions,
-                        const Metrics& metrics, const std::string& error) {
+                        const Metrics& metrics, const std::string& error,
+                        const std::string& preview = "{}") {
   std::size_t alerts = 0;
   std::size_t candidates = 0;
   for (const auto& decision : decisions) {
@@ -542,7 +547,7 @@ std::string status_json(const std::string& input_state,
          << ",\"alerts\":" << alerts << ",\"fps\":" << metrics.fps
          << ",\"inference_ms\":" << metrics.inference_ms
          << ",\"processing_ms\":" << metrics.processing_ms
-         << ",\"last_error\":\"" << json_escape(error) << "\"}";
+         << ",\"last_error\":\"" << json_escape(error) << "\",\"preview\":" << preview << '}';
   return stream.str();
 }
 
@@ -723,7 +728,7 @@ class JpegEncoder {
 
 class LatestHttpServer {
  public:
-  explicit LatestHttpServer(int port) : port_(port) {}
+  explicit LatestHttpServer(int port, PreviewStream* preview = nullptr) : port_(port), preview_(preview) {}
   ~LatestHttpServer() { stop(); }
 
   bool start() {
@@ -767,6 +772,7 @@ class LatestHttpServer {
   }
 
   const std::string& last_error() const { return error_; }
+  bool needs_stream_frame() const { return stream_clients_.load() > 0; }
 
   void stop() {
     if (!running_.exchange(false)) return;
@@ -870,10 +876,38 @@ class LatestHttpServer {
   }
 
   void handle_client(int client) {
-    std::array<char, 2048> request{};
-    const ssize_t size = recv(client, request.data(), request.size() - 1U, 0);
-    if (size <= 0) return;
-    const std::string first_line(request.data(), static_cast<std::size_t>(size));
+    std::string first_line;
+    while (first_line.find("\r\n\r\n") == std::string::npos && first_line.size() < 8192) {
+      std::array<char, 2048> block{};
+      const ssize_t size = recv(client, block.data(), block.size(), 0);
+      if (size <= 0) return;
+      first_line.append(block.data(), static_cast<std::size_t>(size));
+    }
+    if (first_line.size() >= 8192 || first_line.find("\r\n\r\n") == std::string::npos) return;
+    std::istringstream request_line(first_line); std::string method, path, protocol;
+    request_line >> method >> path >> protocol;
+    if (preview_ && path.rfind("/preview/", 0) == 0) {
+      sockaddr_in peer{}; socklen_t peer_size = sizeof(peer);
+      std::string lower = first_line;
+      std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+      if (getpeername(client, reinterpret_cast<sockaddr*>(&peer), &peer_size) != 0 ||
+          (ntohl(peer.sin_addr.s_addr) >> 24) != 127 || lower.find("\r\norigin:") != std::string::npos) {
+        send_text(client, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"); return;
+      }
+      try {
+        const auto q = preview_query(path);
+        if (method == "GET" && path == "/preview/status") { send_response(client, "application/json", preview_->status()); return; }
+        if (method == "POST" && path.rfind("/preview/control", 0) == 0 && lower.find("content-type: application/json") != std::string::npos) {
+          preview_->control(q); send_response(client, "application/json", preview_->status()); return;
+        }
+        if (method == "GET" && path.rfind("/preview/frame", 0) == 0) {
+          const auto after = q.find("after"); const auto epoch = q.find("epoch");
+          const auto bytes = preview_->latest(after == q.end() ? 0 : std::stoull(after->second), epoch == q.end() ? "" : epoch->second);
+          if (bytes.empty()) { send_text(client, "HTTP/1.1 204 No Content\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"); return; }
+          send_response(client, "application/x-poseguard-preview", std::string(bytes.begin(), bytes.end())); return;
+        }
+      } catch (const std::exception&) { send_text(client, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"); return; }
+    }
     if (first_line.rfind("GET /status.json ", 0) == 0) {
       std::string status;
       {
@@ -884,6 +918,11 @@ class LatestHttpServer {
       return;
     }
     if (first_line.rfind("GET /stream.mjpg ", 0) == 0) {
+      struct StreamGuard {
+        std::atomic<int>& count;
+        explicit StreamGuard(std::atomic<int>& value) : count(value) { ++count; }
+        ~StreamGuard() { --count; }
+      } guard(stream_clients_);
       const std::string header =
           "HTTP/1.1 200 OK\r\nConnection: close\r\nCache-Control: no-store, "
           "no-cache\r\nPragma: no-cache\r\nContent-Type: "
@@ -931,6 +970,8 @@ class LatestHttpServer {
   }
 
   int port_{};
+  PreviewStream* preview_{};
+  std::atomic<int> stream_clients_{0};
   int listen_fd_{-1};
   std::atomic<bool> running_{false};
   std::thread accept_thread_{};
@@ -992,12 +1033,17 @@ int run_application(const RuntimeConfig& config) {
   }
   JpegEncoder encoder{};
   JpegEncoder evidence_encoder{false};
+  PreviewStream preview(config.cloud_directory, {config.camera_rotation, config.camera_mirror, 0}, config.source);
+  CameraOrientation orientation;
+  auto applied_camera = preview.camera();
+  orientation.configure(applied_camera.rotation, applied_camera.mirror);
+  orientation.seed(preview.learned_rotation());
   std::unique_ptr<DisplaySink> display;
   if (config.display_enabled) display = std::make_unique<DisplaySink>();
   std::optional<LatestHttpServer> http;
   std::string runtime_error;
   if (config.http_enabled) {
-    http.emplace(config.http_port);
+    http.emplace(config.http_port, &preview);
     if (!http->start()) {
       runtime_error = "HTTP: " + http->last_error();
       http.reset();
@@ -1042,13 +1088,13 @@ int run_application(const RuntimeConfig& config) {
         const std::string state = status_json(
             "waiting_for_usb_camera", source.active_device(), {}, {}, metrics,
             events.last_error().empty() ? source.last_error()
-                                        : events.last_error());
+                                        : events.last_error(), preview.status());
         if (http) http->update_status(state);
         const auto now = std::chrono::steady_clock::now();
         if (now - last_placeholder >= std::chrono::seconds(1)) {
           auto placeholder = waiting_frame(metrics);
           if (display && !display->show(placeholder)) runtime_error = display->last_error();
-          if (http) {
+          if (http && http->needs_stream_frame()) {
             std::vector<std::uint8_t> jpeg;
             if (encoder.encode(placeholder, jpeg)) {
               http->publish(std::move(jpeg), state);
@@ -1068,6 +1114,23 @@ int run_application(const RuntimeConfig& config) {
                                         started)
               .count();
     }
+    const auto processing_started = std::chrono::steady_clock::now();
+    const auto wanted_camera = preview.camera();
+    if (wanted_camera.version != applied_camera.version || wanted_camera.rotation != applied_camera.rotation || wanted_camera.mirror != applied_camera.mirror) {
+      orientation.configure(wanted_camera.rotation, wanted_camera.mirror);
+      applied_camera = wanted_camera;
+    }
+    const double orientation_time = frame.timeline_seconds;
+    auto corrected = orientation.process(std::move(frame), orientation_time, metrics,
+      [&](const Frame& input, Metrics& timing) { return engine.infer(input, timing); });
+    frame = std::move(corrected.frame);
+    auto observations = std::move(corrected.observations);
+    if (corrected.changed) {
+      events.publish({}, last_pts, metrics);
+      if (incidents) incidents->reset("camera_orientation_changed");
+      core.reset();
+    }
+    preview.applied(applied_camera.version, corrected.rotation, applied_camera.mirror, corrected.changed);
     if (!core || frame.width != core_width || frame.height != core_height) {
       CoreConfig core_config = config.core;
       core_config.frame_width = frame.width;
@@ -1077,8 +1140,6 @@ int run_application(const RuntimeConfig& config) {
       core_height = frame.height;
     }
 
-    const auto processing_started = std::chrono::steady_clock::now();
-    auto observations = engine.infer(frame, metrics);
     auto tracks = core->update_tracks(observations, frame.timeline_seconds);
     auto decisions =
         core->evaluate(tracks, frame.width, frame.height, frame.timeline_seconds);
@@ -1126,7 +1187,8 @@ int run_application(const RuntimeConfig& config) {
     }
 
     std::optional<Frame> canvas;
-    if (http || display) canvas = draw_overlay(frame, tracks, decisions, metrics);
+    const bool local_stream = http && http->needs_stream_frame();
+    if (local_stream || display) canvas = draw_overlay(frame, tracks, decisions, metrics);
     if (display && !display->show(*canvas)) {
       runtime_error = "Display: " + display->last_error();
     }
@@ -1134,7 +1196,8 @@ int run_application(const RuntimeConfig& config) {
         std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - processing_started)
             .count();
-    if (http) {
+    preview.offer(frame, tracks, decisions, metrics);
+    if (http && local_stream) {
       std::vector<std::uint8_t> jpeg;
       if (encoder.encode(*canvas, jpeg)) {
         const std::string error = !events.last_error().empty()
@@ -1142,13 +1205,15 @@ int run_application(const RuntimeConfig& config) {
                                       : runtime_error;
         http->publish(std::move(jpeg),
                       status_json("running", source.active_device(), tracks,
-                                  decisions, metrics, error));
+                                  decisions, metrics, error, preview.status()));
       } else {
         runtime_error = encoder.last_error();
         http->update_status(status_json("running", source.active_device(),
                                         tracks, decisions, metrics,
-                                        runtime_error));
+                                        runtime_error, preview.status()));
       }
+    } else if (http) {
+      http->update_status(status_json("running", source.active_device(), tracks, decisions, metrics, runtime_error, preview.status()));
     }
 
     if (config.max_frames > 0 &&

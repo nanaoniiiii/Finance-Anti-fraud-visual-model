@@ -27,6 +27,8 @@ import org.json.JSONObject;
 
 public final class MainActivity extends Activity {
     private WebView web;
+    private PreviewSocket preview;
+    private boolean resumed;
     private boolean migratingAssets;
     private final ExecutorService requests = Executors.newFixedThreadPool(4);
     @Override
@@ -45,13 +47,23 @@ public final class MainActivity extends Activity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         CookieManager.getInstance().setAcceptCookie(true);
         web.addJavascriptInterface(new NativeAPI(), "PoseGuardNative");
+        preview = new PreviewSocket((id, kind, payload) -> runOnUiThread(() -> {
+            if (!isFinishing() && web != null
+                && trusted(Uri.parse(web.getUrl() == null ? Network.ORIGIN : web.getUrl())))
+                web.evaluateJavascript(
+                    "window.__poseguardPreviewNative&&window.__poseguardPreviewNative("
+                        + JSONObject.quote(id) + "," + JSONObject.quote(kind) + ","
+                        + JSONObject.quote(payload) + ")",
+                    null);
+        }));
         web.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 return !trusted(request.getUrl());
             }
             @Override
-            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+            public WebResourceResponse shouldInterceptRequest(
+                WebView view, WebResourceRequest request) {
                 return bundled(request);
             }
             @Override
@@ -61,10 +73,12 @@ public final class MainActivity extends Activity {
                     migratingAssets = true;
                     view.evaluateJavascript(
                         "(async()=>{try{if('serviceWorker'in navigator){for(const r of await "
-                        + "navigator.serviceWorker.getRegistrations())await r.unregister();}if('caches'in "
-                        + "window){for(const key of await "
-                        + "caches.keys())if(key.startsWith('poseguard-'))await "
-                        + "caches.delete(key);}}finally{window.PoseGuardNative.assetsMigrated();}})()",
+                            + "navigator.serviceWorker.getRegistrations())await "
+                              + "r.unregister();}if('caches'in "
+                            + "window){for(const key of await "
+                            + "caches.keys())if(key.startsWith('poseguard-'))await "
+                            + "caches.delete(key);}}finally{window.PoseGuardNative.assetsMigrated()"
+                              + ";}})()",
                         null);
                 }
             }
@@ -114,15 +128,17 @@ public final class MainActivity extends Activity {
             try {
                 return Network.snapshot(path);
             } catch (Exception error) {
-                android.util.Log.w("PoseGuard", "Snapshot load failed: " + error.getClass().getSimpleName());
+                android.util.Log.w(
+                    "PoseGuard", "Snapshot load failed: " + error.getClass().getSimpleName());
                 return null;
             }
         }
-        if (path == null || path.contains("..") || path.startsWith("/api/") || path.startsWith("/downloads/")
-            || path.startsWith("/.well-known/"))
+        if (path == null || path.contains("..") || path.startsWith("/api/")
+            || path.startsWith("/downloads/") || path.startsWith("/.well-known/"))
             return null;
-        String asset = path.startsWith("/assets/") || path.startsWith("/icons/") || path.equals("/icon.svg")
-                || path.equals("/boot-check.js") || path.equals("/manifest.webmanifest")
+        String asset = path.startsWith("/assets/") || path.startsWith("/icons/")
+                || path.equals("/icon.svg") || path.equals("/boot-check.js")
+                || path.equals("/manifest.webmanifest")
             ? path.substring(1)
             : "index.html";
         String mime = asset.endsWith(".js")  ? "application/javascript"
@@ -134,9 +150,11 @@ public final class MainActivity extends Activity {
         try {
             HashMap<String, String> headers = new HashMap<>();
             headers.put("Content-Security-Policy",
-                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' "
-                + "data: blob:; connect-src 'self' wss://poseguard.nanaoni.tech; frame-src 'none'; "
-                + "object-src 'none'");
+                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src "
+                + "'self' "
+                    + "data: blob:; connect-src 'self' wss://poseguard.nanaoni.tech; frame-src "
+                      + "'none'; "
+                    + "object-src 'none'");
             return new WebResourceResponse(
                 mime, "UTF-8", 200, "OK", headers, getAssets().open("hub/" + asset));
         } catch (java.io.IOException error) {
@@ -144,6 +162,8 @@ public final class MainActivity extends Activity {
         }
     }
     private void open(Intent intent) {
+        if (preview != null)
+            preview.close(null, "navigation");
         Uri uri = intent.getData();
         web.loadUrl(uri != null && trusted(uri) ? uri.toString() : Network.ORIGIN);
     }
@@ -161,7 +181,25 @@ public final class MainActivity extends Activity {
             super.onBackPressed();
     }
     @Override
+    protected void onResume() {
+        super.onResume();
+        resumed = true;
+        if (web != null)
+            web.onResume();
+    }
+    @Override
+    protected void onPause() {
+        resumed = false;
+        if (preview != null)
+            preview.close(null, "app_background");
+        if (web != null)
+            web.onPause();
+        super.onPause();
+    }
+    @Override
     protected void onDestroy() {
+        if (preview != null)
+            preview.destroy();
         requests.shutdownNow();
         if (web != null) {
             web.removeJavascriptInterface("PoseGuardNative");
@@ -185,9 +223,28 @@ public final class MainActivity extends Activity {
     }
     final class NativeAPI {
         @JavascriptInterface
+        public void openPreview(String id, String path) {
+            runOnUiThread(() -> {
+                if (resumed && web != null
+                    && trusted(Uri.parse(web.getUrl() == null ? Network.ORIGIN : web.getUrl())))
+                    preview.open(id, path);
+            });
+        }
+        @JavascriptInterface
+        public void sendPreview(String id, String text) {
+            if (preview != null)
+                preview.send(id, text);
+        }
+        @JavascriptInterface
+        public void closePreview(String id) {
+            if (preview != null)
+                preview.close(id, "viewer_stopped");
+        }
+        @JavascriptInterface
         public boolean notificationsEnabled() {
             return getSharedPreferences("receiver", 0).getBoolean("enabled", false)
-                && getSystemService(android.app.NotificationManager.class).areNotificationsEnabled();
+                && getSystemService(android.app.NotificationManager.class)
+                       .areNotificationsEnabled();
         }
         @JavascriptInterface
         public void assetsMigrated() {
@@ -215,10 +272,11 @@ public final class MainActivity extends Activity {
                     status = reply.status;
                     result = reply.body;
                 } catch (Exception error) {
-                    android.util.Log.w(
-                        "PoseGuard", "Native API request failed: " + error.getClass().getSimpleName());
+                    android.util.Log.w("PoseGuard",
+                        "Native API request failed: " + error.getClass().getSimpleName());
                 }
-                final String script = "window.__poseguardNativeResult&&window.__poseguardNativeResult("
+                final String script =
+                    "window.__poseguardNativeResult&&window.__poseguardNativeResult("
                     + JSONObject.quote(id) + "," + status + "," + JSONObject.quote(result) + ")";
                 runOnUiThread(() -> {
                     if (!isFinishing())

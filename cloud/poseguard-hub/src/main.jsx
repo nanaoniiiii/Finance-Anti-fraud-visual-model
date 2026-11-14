@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import DevicePreview from './DevicePreview.jsx';
 import {
   Activity,
   ArrowDownToLine,
@@ -945,6 +946,7 @@ function App() {
                         <DeviceCard
                           key={d.id}
                           device={d}
+                      onPreview={() => setModal({ type: 'preview', device: d })}
                           onOpen={() => {
                             navigate('devices');
                             setModal({ type: 'device', device: d });
@@ -1048,6 +1050,7 @@ function App() {
                     <DeviceCard
                       key={d.id}
                       device={d}
+                      onPreview={() => setModal({ type: 'preview', device: d })}
                       onOpen={() => setModal({ type: 'device', device: d })}
                     />
                   ))}
@@ -1650,7 +1653,12 @@ function App() {
           onClose={() => setModal(null)}
           onSave={reload}
           notify={notify}
+          onPreview={() => setModal({ type: 'preview', device: modal.device })}
         />
+      )}
+      {modal?.type === 'preview' && (
+        <DevicePreview device={modal.device} user={user} api={api} Modal={Modal}
+          Button={Button} onClose={() => setModal(null)} />
       )}
       {['resolve', 'intervention'].includes(modal?.type) && (
         <ActionModal
@@ -1880,9 +1888,9 @@ function Workflow({ icon: Icon, n, title, text }) {
     </div>
   );
 }
-function DeviceCard({ device: d, onOpen }) {
+function DeviceCard({ device: d, onOpen, onPreview }) {
   return (
-    <button className="device-card" onClick={onOpen}>
+    <div className="device-card-shell"><button className="device-card" onClick={onOpen}>
       <div className="device-card-top">
         <span className={'device-icon ' + d.platform}>
           <PlatformIcon platform={d.platform} />
@@ -1908,6 +1916,11 @@ function DeviceCard({ device: d, onOpen }) {
         <small>{ago(d.last_seen)}</small>
       </div>
     </button>
+      <button className="device-preview-trigger" onClick={onPreview}
+        disabled={!d.online || !d.health?.capabilities?.preview}>
+        <Eye size={16} />{!d.online ? '设备离线' : d.health?.capabilities?.preview ? '实时预览' : '需升级预览组件'}
+      </button>
+    </div>
   );
 }
 function EventTable({ events, onOpen }) {
@@ -2066,7 +2079,7 @@ function BindModal({ onClose, notify }) {
     </Modal>
   );
 }
-function DeviceModal({ device, user, onClose, onSave, notify }) {
+function DeviceModal({ device, user, onClose, onSave, notify, onPreview }) {
   const [name, setName] = useState(device.name);
   const [location, setLocation] = useState(device.location);
   const [busy, setBusy] = useState(false);
@@ -2084,6 +2097,9 @@ function DeviceModal({ device, user, onClose, onSave, notify }) {
               {device.online ? '在线' : '离线'}
             </p>
           </div>
+        </div>
+        <div className="modal-actions">
+          <Button onClick={onPreview}><Eye size={16} />实时画面与方向设置</Button>
         </div>
         <dl className="facts">
           <div>

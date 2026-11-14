@@ -51,6 +51,8 @@ def main() -> int:
         files['bin/poseguard-relay'] = args.relay
         files['service/S99poseguardcloud'] = platform / 'service/S99poseguardcloud'
         files['CLOUD.md'] = repo / 'docs/CLOUD.zh-CN.md'
+        files['PREVIEW.zh-CN.md'] = repo / 'docs/PREVIEW.zh-CN.md'
+        files['licenses/CODER-WEBSOCKET.txt'] = repo / 'licenses/coder-websocket-ISC.txt'
     for source in files.values():
         if not source.is_file() or source.stat().st_size == 0:
             raise ValueError(f'Required release input is missing or empty: {source}')
@@ -64,6 +66,8 @@ def main() -> int:
             data = source.read_bytes()
             if relative not in ('bin/poseguard-rk3566', 'bin/poseguard-relay', 'lib/librknnrt.so') and not relative.startswith('models/'):
                 data = data.replace(b'\r\n', b'\n')
+                if relative == 'README.md':
+                    data = data.replace(b'../../docs/PREVIEW.zh-CN.md', b'PREVIEW.zh-CN.md')
             target.write_bytes(data)
             if relative.startswith('bin/') or relative.endswith('.sh') or relative.startswith('service/'):
                 target.chmod(0o755)

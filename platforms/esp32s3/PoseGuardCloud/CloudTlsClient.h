@@ -9,6 +9,7 @@
 #include <lwip/netdb.h>
 
 #include <array>
+#include <mutex>
 
 // The Arduino resolver may return just one address. Ask the router's DNS
 // server for all IPv4 candidates after a failed TLS or HTTP request.
@@ -20,21 +21,26 @@ class CloudTlsClient : public WiFiClientSecure {
   int connect(const char* host, uint16_t port, int32_t timeout) override {
     selected_ = IPAddress();
     selectedHost_ = host;
+    IPAddress failed, preferred;
+    {
+      std::lock_guard<std::mutex> guard(routesMutex_);
+      if (failedHost_ == host) failed = failed_;
+      if (preferredHost_ == host) preferred = preferred_;
+    }
     // A server can complete TLS but then stop replying to HTTP. Try another
     // verified address before reusing that route after a transport failure.
-    if (failedHost_ == host && failed_ != IPAddress()) {
+    if (failed != IPAddress()) {
       const auto alternatives = queryRouter(host);
       for (size_t i = 0; i < alternatives.count; ++i) {
         const auto address = alternatives.items[i];
-        if (address != failed_ && tryAddress(address, host, port, timeout)) {
+        if (address != failed && tryAddress(address, host, port, timeout)) {
           remember(host, address);
           return 1;
         }
       }
     }
-    if (preferredHost_ == host && preferred_ != IPAddress() &&
-        tryAddress(preferred_, host, port, timeout)) {
-      remember(host, preferred_);
+    if (preferred != IPAddress() && tryAddress(preferred, host, port, timeout)) {
+      remember(host, preferred);
       return 1;
     }
     // Network.hostByName in Core 3.3.2 can clear the shared DNS cache from
@@ -57,13 +63,17 @@ class CloudTlsClient : public WiFiClientSecure {
         return 1;
       }
     }
-    preferred_ = IPAddress();
+    {
+      std::lock_guard<std::mutex> guard(routesMutex_);
+      if (preferredHost_ == host) preferred_ = IPAddress();
+    }
     return 0;
   }
 
   IPAddress connectedAddress() const { return selected_; }
 
   void noteHttpResult(int status) {
+    std::lock_guard<std::mutex> guard(routesMutex_);
     if (status <= 0) {
       if (selected_ != IPAddress()) {
         failedHost_ = selectedHost_;
@@ -90,6 +100,7 @@ class CloudTlsClient : public WiFiClientSecure {
   inline static IPAddress preferred_;
   inline static String failedHost_;
   inline static IPAddress failed_;
+  inline static std::mutex routesMutex_;
 
   bool tryAddress(IPAddress address, const char* host, uint16_t port,
                   int32_t timeout) {
@@ -101,6 +112,7 @@ class CloudTlsClient : public WiFiClientSecure {
   void remember(const char* host, IPAddress address) {
     selectedHost_ = host;
     selected_ = address;
+    std::lock_guard<std::mutex> guard(routesMutex_);
     preferredHost_ = host;
     preferred_ = address;
   }

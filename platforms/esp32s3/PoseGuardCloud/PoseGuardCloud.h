@@ -42,20 +42,31 @@ class PoseGuardCloud {
     request["code"] = code;
     request["platform"] = "esp32s3";
     if (!post("/api/enroll", request, response, false)) return false;
-    token_ = response["device_token"].as<String>();
-    device_ = response["device_id"].as<String>();
-    if (token_.isEmpty() || device_.isEmpty()) return false;
+    const String token = response["device_token"].as<String>();
+    const String device = response["device_id"].as<String>();
+    if (token.isEmpty() || device.isEmpty()) return false;
+    Guard guard(lock_);
+    token_ = token; device_ = device;
     store_.putString("token", token_);
     store_.putString("device", device_);
     return true;
   }
-  bool bound() const { return !token_.isEmpty(); }
+  bool bound() const { if (!lock_) return false; Guard guard(lock_); return !token_.isEmpty(); }
+  bool previewIdentity(String& server, String& device, String& token) const {
+    if (!lock_) return false;
+    Guard guard(lock_);
+    server = server_; device = device_; token = token_;
+    return !token.isEmpty() && !device.isEmpty();
+  }
+  void setPreviewAvailable(bool available) { if (!lock_) return; Guard guard(lock_); previewAvailable_ = available; }
   int lastHttpStatus() const { return lastHttpStatus_.load(); }
   uint32_t lastHeartbeatAgeSeconds() const {
     const auto heartbeat = lastHeartbeat_.load();
     return heartbeat ? (millis() - heartbeat) / 1000 : UINT32_MAX;
   }
   void setHealth(float fps, int people, const String& mode = "running") {
+    if (!lock_) return;
+    Guard guard(lock_);
     fps_ = fps;
     people_ = people;
     mode_ = mode;
@@ -108,10 +119,16 @@ class PoseGuardCloud {
     const auto heartbeat = lastHeartbeat_.load();
     if (!heartbeat || now - heartbeat >= 30000) {
       JsonDocument request, response;
-      request["mode"] = mode_;
-      request["fps"] = fps_;
-      request["people"] = people_;
-      request["firmware"] = "poseguard-esp32s3/1.2.2";
+      {
+        Guard guard(lock_);
+        request["mode"] = mode_;
+        request["fps"] = fps_;
+        request["people"] = people_;
+        request["capabilities"]["preview"] = previewAvailable_;
+        request["capabilities"]["pose_overlay"] = false;
+        request["capabilities"]["camera_orientation"] = previewAvailable_;
+      }
+      request["firmware"] = "poseguard-esp32s3/1.3.0";
       request["clock_synced"] = true;
       request["capabilities"]["external_detections"] = true;
       request["capabilities"]["local_evidence"] = true;
@@ -210,6 +227,7 @@ class PoseGuardCloud {
   const char* ca_{};
   float fps_{};
   int people_{};
+  bool previewAvailable_{};
   std::atomic<uint32_t> lastHeartbeat_{0};
   std::atomic<int> lastHttpStatus_{0};
   uint32_t retryAt_{};
@@ -321,8 +339,8 @@ class PoseGuardCloud {
     }
     http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
     http.addHeader("Content-Type", "application/json");
-    http.setUserAgent("PoseGuard/1.2.2");
-    if (authenticated) http.addHeader("Authorization", "Bearer " + token_);
+    http.setUserAgent("PoseGuard/1.3.0");
+    if (authenticated) { Guard guard(lock_); http.addHeader("Authorization", "Bearer " + token_); }
     String text;
     serializeJson(input, text);
     int status = http.POST(text);

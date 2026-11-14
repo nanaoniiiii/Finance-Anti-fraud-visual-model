@@ -1,19 +1,99 @@
+#include "poseguard/camera.hpp"
+#include <array>
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 
-#include "poseguard/video_source.hpp"
 #include "poseguard/runtime.hpp"
+#include "poseguard/video_source.hpp"
 
 #ifdef POSEGUARD_WITH_RKNN
 #include "poseguard/rknn_pose.hpp"
 #endif
 
 namespace {
-constexpr std::string_view kVersion = "1.2.0";
+constexpr std::string_view kVersion = "1.3.0";
 
-int parse_max_frames(int argc, char* argv[], int fallback) {
+#ifdef POSEGUARD_WITH_RKNN
+int run_orientation_smoke(const std::string &model, const std::string &video) {
+  poseguard::RknnPoseEngine engine(model);
+  poseguard::VideoSource source({poseguard::VideoSourceKind::File, video});
+  std::array<poseguard::CameraOrientation, 4> automatic;
+  std::array<unsigned, 4> restored{}, detected{}, auto_restored{};
+  unsigned samples = 0, baseline_people = 0;
+  for (unsigned frame_number = 0; frame_number < 360; ++frame_number) {
+    poseguard::Frame original;
+    if (!source.read(original, 3000)) {
+      if (source.end_of_stream())
+        break;
+      throw std::runtime_error("orientation smoke cannot read video: " +
+                               source.last_error());
+    }
+    if (frame_number % 30)
+      continue;
+    ++samples;
+    poseguard::Metrics baseline_metrics;
+    const auto baseline = engine.infer(original, baseline_metrics);
+    baseline_people += baseline.size();
+    for (unsigned i = 0; i < 4; ++i) {
+      const int mounted = i * 90;
+      const auto raw = poseguard::rotate_frame(original, mounted);
+      poseguard::CameraOrientation manual;
+      manual.configure(std::to_string((360 - mounted) % 360), false);
+      poseguard::Metrics timing;
+      auto result =
+          manual.process(raw, samples * .7, timing,
+                         [&](const poseguard::Frame &f, poseguard::Metrics &m) {
+                           return engine.infer(f, m);
+                         });
+      const bool exact = result.frame.rgb == original.rgb &&
+                         result.frame.width == original.width &&
+                         result.frame.height == original.height;
+      if (exact)
+        ++restored[i];
+      if (result.observations.size() == baseline.size())
+        ++detected[i];
+      auto learned = automatic[i].process(
+          raw, samples * .7, timing,
+          [&](const poseguard::Frame &f, poseguard::Metrics &m) {
+            return engine.infer(f, m);
+          });
+      const bool auto_exact = learned.frame.rgb == original.rgb;
+      if (auto_exact)
+        ++auto_restored[i];
+      std::cout << "sample=" << samples << " mounted=" << mounted
+                << " correction=" << result.rotation << " exact_rgb=" << exact
+                << " baseline_people=" << baseline.size()
+                << " manual_people=" << result.observations.size()
+                << " auto_correction=" << learned.rotation
+                << " auto_people=" << learned.observations.size()
+                << " auto_exact=" << auto_exact << " score="
+                << poseguard::orientation_score(learned.observations) << '\n';
+    }
+  }
+  bool passed = samples >= 4 && baseline_people > 0;
+  bool auto_passed = passed;
+  for (unsigned i = 0; i < 4; ++i) {
+    passed = passed && restored[i] == samples && detected[i] == samples;
+    auto_passed = auto_passed && automatic[i].rotation() ==
+                                     (360 - static_cast<int>(i) * 90) % 360;
+    std::cout << "summary mounted=" << i * 90 << " samples=" << samples
+              << " restored=" << restored[i]
+              << " matched_detection_count=" << detected[i]
+              << " auto_restored=" << auto_restored[i]
+              << " auto_final=" << automatic[i].rotation() << '\n';
+  }
+  std::cout << "four_direction_manual_npu=" << (passed ? "PASS" : "FAIL")
+            << '\n';
+  std::cout << "four_direction_auto_npu=" << (auto_passed ? "PASS" : "FAIL")
+            << '\n';
+  return passed && auto_passed ? 0 : 1;
+}
+#endif
+
+int parse_max_frames(int argc, char *argv[], int fallback) {
   for (int index = 1; index + 1 < argc; ++index) {
     if (std::string_view{argv[index]} == "--max-frames") {
       const int value = std::stoi(argv[index + 1]);
@@ -26,9 +106,8 @@ int parse_max_frames(int argc, char* argv[], int fallback) {
   return fallback;
 }
 
-int run_input_smoke(const std::string& video_path, int max_frames) {
-  poseguard::VideoSource source(
-      {poseguard::VideoSourceKind::File, video_path});
+int run_input_smoke(const std::string &video_path, int max_frames) {
+  poseguard::VideoSource source({poseguard::VideoSourceKind::File, video_path});
   double previous_pts = -1.0;
   int empty_reads = 0;
   for (int frame_index = 0; frame_index < max_frames;) {
@@ -56,18 +135,18 @@ int run_input_smoke(const std::string& video_path, int max_frames) {
 }
 
 void print_usage() {
-  std::cout
-      << "Usage:\n"
-      << "  poseguard-rk3566 --version\n"
-      << "  poseguard-rk3566 --model-smoke MODEL\n"
-      << "  poseguard-rk3566 --input-smoke VIDEO [--max-frames N]\n"
-      << "  poseguard-rk3566 --config FILE [--source camera|video] "
-         "[--video FILE] [--device /dev/videoN] [--model FILE] "
-         "[--benchmark] [--max-frames N] [--no-http] "
-         "[--display|--no-display] [--loop-video] [--debug-trace FILE]\n";
+  std::cout << "Usage:\n"
+            << "  poseguard-rk3566 --version\n"
+            << "  poseguard-rk3566 --model-smoke MODEL\n"
+            << "  poseguard-rk3566 --orientation-smoke MODEL VIDEO\n"
+            << "  poseguard-rk3566 --input-smoke VIDEO [--max-frames N]\n"
+            << "  poseguard-rk3566 --config FILE [--source camera|video] "
+               "[--video FILE] [--device /dev/videoN] [--model FILE] "
+               "[--benchmark] [--max-frames N] [--no-http] "
+               "[--display|--no-display] [--loop-video] [--debug-trace FILE]\n";
 }
 
-poseguard::RuntimeConfig parse_runtime_config(int argc, char* argv[]) {
+poseguard::RuntimeConfig parse_runtime_config(int argc, char *argv[]) {
   poseguard::RuntimeConfig config{};
   for (int index = 1; index + 1 < argc; ++index) {
     if (std::string_view{argv[index]} == "--config") {
@@ -119,12 +198,26 @@ poseguard::RuntimeConfig parse_runtime_config(int argc, char* argv[]) {
   }
   return config;
 }
-}
+} // namespace
 
-int main(int argc, char* argv[]) {
+int main(int argc, char *argv[]) {
   if (argc == 2 && std::string_view{argv[1]} == "--version") {
     std::cout << "PoseGuard RK3566 " << kVersion << '\n';
     return 0;
+  }
+
+  if (argc == 4 && std::string_view{argv[1]} == "--orientation-smoke") {
+#ifdef POSEGUARD_WITH_RKNN
+    try {
+      return run_orientation_smoke(argv[2], argv[3]);
+    } catch (const std::exception &error) {
+      std::cerr << error.what() << '\n';
+      return 2;
+    }
+#else
+    std::cerr << "RKNN support is not enabled in this build\n";
+    return 2;
+#endif
   }
 
   if (argc == 3 && std::string_view{argv[1]} == "--model-smoke") {
@@ -140,12 +233,12 @@ int main(int argc, char* argv[]) {
       const auto shape = engine.output_shape();
       std::cout << "runtime=" << engine.runtime_version() << '\n'
                 << "driver=" << engine.driver_version() << '\n'
-                << "output=[" << shape[0] << ',' << shape[1] << ','
-                << shape[2] << "]\n"
+                << "output=[" << shape[0] << ',' << shape[1] << ',' << shape[2]
+                << "]\n"
                 << "inference_ms=" << metrics.inference_ms << '\n'
                 << "people=" << people.size() << '\n';
       return 0;
-    } catch (const std::exception& error) {
+    } catch (const std::exception &error) {
       std::cerr << "model smoke failed: " << error.what() << '\n';
       return 1;
     }
@@ -158,7 +251,7 @@ int main(int argc, char* argv[]) {
   if (argc >= 3 && std::string_view{argv[1]} == "--input-smoke") {
     try {
       return run_input_smoke(argv[2], parse_max_frames(argc, argv, 30));
-    } catch (const std::exception& error) {
+    } catch (const std::exception &error) {
       std::cerr << "input smoke failed: " << error.what() << '\n';
       return 2;
     }
@@ -170,7 +263,7 @@ int main(int argc, char* argv[]) {
   }
   try {
     return poseguard::run_application(parse_runtime_config(argc, argv));
-  } catch (const std::exception& error) {
+  } catch (const std::exception &error) {
     std::cerr << "PoseGuard failed: " << error.what() << '\n';
     return 2;
   }

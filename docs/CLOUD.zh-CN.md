@@ -1,4 +1,6 @@
-# PoseGuard 多端云预警 1.2
+# PoseGuard 多端云预警 1.3
+
+1.3 新增按需实时预览、原始/姿态画面切换与自动/四角度安装方向控制，见[预览使用说明](PREVIEW.zh-CN.md)和[本次实测记录](preview-validation-2026-11-15.md)。
 
 管理地址：https://poseguard.nanaoni.tech
 

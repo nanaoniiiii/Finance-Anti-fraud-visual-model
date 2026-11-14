@@ -2,7 +2,7 @@ plugins { id 'com.android.application' }
 android {
     namespace 'tech.nanaoni.poseguard'
     compileSdk 36
-    defaultConfig { applicationId 'tech.nanaoni.poseguard'; minSdk 24; targetSdk 36; versionCode 121; versionName '1.2.0' }
+    defaultConfig { applicationId 'tech.nanaoni.poseguard'; minSdk 24; targetSdk 36; versionCode 130; versionName '1.3.0' }
     signingConfigs {
         release {
             if (System.getenv('PG_ANDROID_KEYSTORE')) {
@@ -17,6 +17,7 @@ android {
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     sourceSets.main.assets.srcDir(layout.buildDirectory.dir('generated/poseguard-assets'))
 }
+dependencies { implementation 'com.squareup.okhttp3:okhttp:5.3.2' }
 
 def hubDist = file("$rootDir/../../cloud/poseguard-hub/dist")
 tasks.register('stageHubAssets', Sync) {
