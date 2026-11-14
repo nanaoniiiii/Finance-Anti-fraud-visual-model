@@ -24,7 +24,7 @@ arduino-cli compile --fqbn "esp32:esp32:esp32s3:PSRAM=opi,CDCOnBoot=cdc,USBMode=
 
 连接串口 115200。若存储尚未初始化，设备会提示；确认原有数据已备份后，输入 `INIT_STORAGE` 初始化示例使用的 LittleFS 分区。
 
-输入 `WIFI 网络名|密码` 保存网络配置并重启。网络连接后设备通过 NTP 获取时间，校准时间后才能验证 HTTPS 证书。串口不会回显保存的密码。
+输入 `WIFI 网络名|密码` 保存配置并连接。网络连接后设备通过 NTP 获取时间，校准时间后才能验证 HTTPS 证书。串口不会回显保存的密码。
 
 `STATUS` 会显示关联状态、断开原因和 IP 地址。若路由器提供 WPA2 密钥，可同样通过串口配置该网络的 64 位十六进制 PSK，并用 `WIFI_AP 网络名|PSK` 连接扫描到的最强同名接入点。PSK 与 Wi-Fi 密码同样需要私下保存。
 

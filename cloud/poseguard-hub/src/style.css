@@ -2756,7 +2756,10 @@ p {
 .receiver-scope label {
   align-items: center;
   display: flex;
+  flex-direction: row;
   gap: 8px;
+  min-height: 36px;
+  text-align: left;
 }
 .receiver-scope input[type='checkbox'] {
   width: 18px;

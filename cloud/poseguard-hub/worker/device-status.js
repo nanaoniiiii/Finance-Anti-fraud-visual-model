@@ -32,7 +32,13 @@ async function transition(env, device, state, detail, ctx) {
     .run();
   const notify = !device.is_test && previous !== 'unknown';
   const title = names[state];
-  const message = `${device.name}：${state === 'offline' ? '超过 90 秒未收到设备心跳' : detail || title}`;
+  const reason =
+    state === 'offline'
+      ? '超过 90 秒未收到设备心跳'
+      : state === 'online'
+        ? '已重新收到设备心跳'
+        : detail || title;
+  const message = `${device.name}：${reason}`;
   const change = await emitChange(
     env,
     'device',
