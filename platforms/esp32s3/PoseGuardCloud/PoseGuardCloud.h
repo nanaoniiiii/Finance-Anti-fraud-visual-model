@@ -9,6 +9,7 @@
 #include <esp_timer.h>
 #include <mbedtls/base64.h>
 
+#include <atomic>
 #include <memory>
 
 #include "incident_counter.hpp"
@@ -47,6 +48,11 @@ class PoseGuardCloud {
     return true;
   }
   bool bound() const { return !token_.isEmpty(); }
+  int lastHttpStatus() const { return lastHttpStatus_.load(); }
+  uint32_t lastHeartbeatAgeSeconds() const {
+    const auto heartbeat = lastHeartbeat_.load();
+    return heartbeat ? (millis() - heartbeat) / 1000 : UINT32_MAX;
+  }
   void setHealth(float fps, int people, const String& mode = "running") {
     fps_ = fps;
     people_ = people;
@@ -92,15 +98,18 @@ class PoseGuardCloud {
   }
   // Run in its own task. HTTPS requests may block while the link is down.
   void networkTick() {
+    const uint32_t now = millis();
     if (!bound() || WiFi.status() != WL_CONNECTED ||
-        time(nullptr) < 1704067200 || millis() < retryAt_)
+        time(nullptr) < 1704067200 ||
+        (retryAt_ && static_cast<int32_t>(now - retryAt_) < 0))
       return;
-    if (millis() - lastHeartbeat_ >= 30000 || lastHeartbeat_ == 0) {
+    const auto heartbeat = lastHeartbeat_.load();
+    if (!heartbeat || now - heartbeat >= 30000) {
       JsonDocument request, response;
       request["mode"] = mode_;
       request["fps"] = fps_;
       request["people"] = people_;
-      request["firmware"] = "poseguard-esp32s3/1.2.0";
+      request["firmware"] = "poseguard-esp32s3/1.2.1";
       request["clock_synced"] = true;
       request["capabilities"]["external_detections"] = true;
       request["capabilities"]["local_evidence"] = true;
@@ -109,6 +118,8 @@ class PoseGuardCloud {
         return;
       }
       lastHeartbeat_ = millis();
+      failures_ = 0;
+      retryAt_ = 0;
       {
         Guard guard(lock_);
         auto rules = response["rules"];
@@ -196,7 +207,9 @@ class PoseGuardCloud {
   const char* ca_{};
   float fps_{};
   int people_{};
-  uint32_t lastHeartbeat_{}, retryAt_{};
+  std::atomic<uint32_t> lastHeartbeat_{0};
+  std::atomic<int> lastHttpStatus_{0};
+  uint32_t retryAt_{};
   int failures_{};
   static uint64_t millis64() { return uint64_t(esp_timer_get_time() / 1000); }
   static String randomID() {
@@ -292,27 +305,35 @@ class PoseGuardCloud {
             bool authenticated = true) {
     WiFiClientSecure tls;
     tls.setCACert(ca_);
+    tls.setHandshakeTimeout(8);
     tls.setTimeout(12000);
     HTTPClient http;
+    http.setConnectTimeout(6500);
     http.setTimeout(12000);
-    if (!http.begin(tls, server_ + route)) return false;
+    http.setReuse(false);
+    if (!http.begin(tls, server_ + route)) {
+      lastHttpStatus_ = -100;
+      return false;
+    }
     http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
     http.addHeader("Content-Type", "application/json");
-    http.setUserAgent("PoseGuard/1.2.0");
+    http.setUserAgent("PoseGuard/1.2.1");
     if (authenticated) http.addHeader("Authorization", "Bearer " + token_);
     String text;
     serializeJson(input, text);
     int status = http.POST(text);
+    lastHttpStatus_ = status;
     if (status >= 200 && status < 300) {
       auto error = deserializeJson(output, http.getString());
       http.end();
+      if (error) lastHttpStatus_ = -101;
       return !error;
     }
     http.end();
     return false;
   }
   void backoff() {
-    failures_ = min(6, failures_ + 1);
-    retryAt_ = millis() + min(60000UL, 1000UL << failures_);
+    failures_ = min(4, failures_ + 1);
+    retryAt_ = millis() + (1000UL << failures_);
   }
 };

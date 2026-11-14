@@ -23,10 +23,11 @@ void printStatus() {
   const auto status = WiFi.status();
   Serial.printf(
       "WiFi=%d storage=%d bound=%d status=%d disconnect=%d clock_synced=%d "
-      "ip=%s\n",
+      "ip=%s cloud_http=%d heartbeat_age_s=%lu\n",
       status == WL_CONNECTED, ready, cloud.bound(), status,
       disconnectReason.load(), time(nullptr) >= 1704067200,
-      WiFi.localIP().toString().c_str());
+      WiFi.localIP().toString().c_str(), cloud.lastHttpStatus(),
+      static_cast<unsigned long>(cloud.lastHeartbeatAgeSeconds()));
 }
 
 void scanConfiguredNetwork() {
@@ -46,6 +47,32 @@ void connectNetwork(const String& ssid, const String& password, int channel = 0,
   WiFi.disconnect();
   disconnectReason.store(0);
   WiFi.begin(ssid.c_str(), password.c_str(), channel, bssid);
+}
+
+void connectStoredNetwork(const String& ssid, const String& password,
+                          bool selectAccessPoint) {
+  if (!selectAccessPoint) {
+    connectNetwork(ssid, password);
+    return;
+  }
+
+  WiFi.disconnect();
+  const int count = WiFi.scanNetworks();
+  int strongest = -1;
+  for (int i = 0; i < count; ++i) {
+    if (WiFi.SSID(i) == ssid &&
+        (strongest < 0 || WiFi.RSSI(i) > WiFi.RSSI(strongest))) {
+      strongest = i;
+    }
+  }
+  if (strongest >= 0) {
+    uint8_t bssid[6];
+    memcpy(bssid, WiFi.BSSID(strongest), sizeof(bssid));
+    connectNetwork(ssid, password, WiFi.channel(strongest), bssid);
+  } else {
+    connectNetwork(ssid, password);
+  }
+  WiFi.scanDelete();
 }
 
 void configureNetwork(const String& line, bool pinAccessPoint = false) {
@@ -69,34 +96,15 @@ void configureNetwork(const String& line, bool pinAccessPoint = false) {
   const bool saved =
       settings.begin("pg-network", false) &&
       settings.putString("ssid", ssid) == ssid.length() &&
-      settings.putString("password", password) == password.length();
+      settings.putString("password", password) == password.length() &&
+      settings.putBool("select_ap", pinAccessPoint) == 1;
   settings.end();
   if (!saved) {
     Serial.println("保存 Wi-Fi 失败，请检查 NVS 分区");
     return;
   }
   configuredSsid = ssid;
-  if (pinAccessPoint) {
-    WiFi.disconnect();
-    const int count = WiFi.scanNetworks();
-    int strongest = -1;
-    for (int i = 0; i < count; ++i) {
-      if (WiFi.SSID(i) == ssid &&
-          (strongest < 0 || WiFi.RSSI(i) > WiFi.RSSI(strongest))) {
-        strongest = i;
-      }
-    }
-    if (strongest >= 0) {
-      uint8_t bssid[6];
-      memcpy(bssid, WiFi.BSSID(strongest), sizeof(bssid));
-      connectNetwork(ssid, password, WiFi.channel(strongest), bssid);
-    } else {
-      connectNetwork(ssid, password);
-    }
-    WiFi.scanDelete();
-  } else {
-    connectNetwork(ssid, password);
-  }
+  connectStoredNetwork(ssid, password, pinAccessPoint);
   Serial.println("Wi-Fi 已保存，正在连接");
 }
 }  // namespace
@@ -118,15 +126,17 @@ void setup() {
   if (settings.begin("pg-network", true)) {
     configuredSsid = settings.getString("ssid");
     const String password = settings.getString("password");
+    const bool selectAccessPoint =
+        settings.getBool("select_ap", password.length() == 64);
     settings.end();
     if (!configuredSsid.isEmpty())
-      WiFi.begin(configuredSsid.c_str(), password.c_str());
+      connectStoredNetwork(configuredSsid, password, selectAccessPoint);
   }
   configTime(0, 0, "time.cloudflare.com", "pool.ntp.org", "ntp.aliyun.com");
   ready = cloud.begin("https://poseguard.nanaoni.tech", POSEGUARD_ROOT_CA);
   if (ready) xTaskCreate(networkTask, "pg-cloud", 16384, nullptr, 1, nullptr);
   Serial.println(
-      "PoseGuard ESP32-S3 1.2.0 "
+      "PoseGuard ESP32-S3 1.2.1 "
       "已启动。可用命令：WIFI、BIND、STATUS、SCAN、INIT_STORAGE");
 }
 
