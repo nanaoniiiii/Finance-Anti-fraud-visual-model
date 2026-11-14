@@ -20,6 +20,7 @@ models/*.rknn
 runs/*
 !runs/.gitkeep
 build/rk3566-*/
+build/esp32-host/
 platforms/rk3566/artifacts/
 platforms/rk3566/media/*.mp4
 platforms/rk3566/media/*.avi

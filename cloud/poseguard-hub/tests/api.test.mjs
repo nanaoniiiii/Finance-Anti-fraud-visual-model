@@ -2,12 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 const base = process.env.PG_TEST_BASE || 'http://127.0.0.1:8787';
 const credentials = process.env.PG_TEST_PASSWORD;
-const call = async (path, method = 'GET', input, token) => {
+const call = async (path, method = 'GET', input, token, headers = {}) => {
   const response = await fetch(base + path, {
     method,
     headers: {
       ...(token ? { Authorization: 'Bearer ' + token } : {}),
       ...(input ? { 'Content-Type': 'application/json' } : {}),
+      ...headers,
     },
     body: input ? JSON.stringify(input) : undefined,
   });
@@ -17,7 +18,7 @@ const call = async (path, method = 'GET', input, token) => {
   return { status: response.status, data };
 };
 test(
-  '真实Worker/D1：绑定、101帧边界、幂等、升级、私有截图、介入与撤销',
+  '真实Worker/D1：绑定、跨IP、101帧边界、幂等、升级、私有截图、介入与撤销',
   { skip: !credentials },
   async () => {
     for (const path of [
@@ -55,6 +56,14 @@ test(
     assert.equal(enrolled.status, 201, JSON.stringify(enrolled.data));
     const device = enrolled.data.device_token;
     assert.ok(device.startsWith('pgd_'));
+    for (const address of ['198.51.100.8', '203.0.113.21']) {
+      const acrossNetworks = await call(
+        '/api/device/heartbeat', 'POST',
+        { mode: 'testing', fps: 0, people: 0, clock_synced: true }, device,
+        { 'CF-Connecting-IP': address }
+      );
+      assert.equal(acrossNetworks.status, 200, JSON.stringify(acrossNetworks.data));
+    }
     assert.equal(
       (await call('/api/enroll', 'POST', { code: invitation.data.code }))
         .status,
@@ -101,8 +110,10 @@ test(
     assert.equal(first.status, 201, JSON.stringify(first.data));
     const id = first.data.incident_id;
     const duplicates = await Promise.all(
-      Array.from({ length: 4 }, () =>
-        call('/api/device/events', 'POST', fixture, device)
+      Array.from({ length: 4 }, (_, index) =>
+        call('/api/device/events', 'POST', fixture, device, {
+          'CF-Connecting-IP': index % 2 ? '198.51.100.8' : '203.0.113.21',
+        })
       )
     );
     assert.ok(duplicates.every((x) => x.status === 200 && x.data.duplicate));

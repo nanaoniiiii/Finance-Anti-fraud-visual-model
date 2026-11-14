@@ -6,7 +6,7 @@
 
 - Espressif Arduino Core 3.3.2，ArduinoJson 7.4.2。
 - 目标 `esp32:esp32:esp32s3:PSRAM=opi,CDCOnBoot=cdc,USBMode=hwcdc,FlashSize=8M`，使用 8 MB Flash 和 8 MB OPI PSRAM。
-- 程序约 1.10 MB，静态 RAM 47,836 字节。
+- 1.2.2 程序约 1.10 MB，静态 RAM 约 48 KB；准确值见对应版本构建记录。
 - 示例不操作 GPIO 电机、继电器或蜂鸣器，不假设摄像头接线。
 - HTTPS 校验使用 Google Trust Services Root R4，根证书来自 https://pki.goog/repository/ 。服务端更换证书颁发机构时应更新信任根。
 
@@ -29,6 +29,16 @@ arduino-cli compile --fqbn "esp32:esp32:esp32s3:PSRAM=opi,CDCOnBoot=cdc,USBMode=
 `STATUS` 会显示关联状态、断开原因和 IP 地址。若路由器提供 WPA2 密钥，可同样通过串口配置该网络的 64 位十六进制 PSK，并用 `WIFI_AP 网络名|PSK` 连接扫描到的最强同名接入点。PSK 与 Wi-Fi 密码同样需要私下保存。
 
 在网页“设备与绑定”选择 ESP32-S3，生成一次性绑定码，然后在串口输入 `BIND 绑定码`。`STATUS` 可查看 Wi-Fi、存储和绑定状态。绑定后后台任务发送心跳并接收介入命令。
+
+1.2.2 会在 TLS 连接失败后查询路由器 DNS 返回的其他 IPv4 地址；若 TLS 已连接但 HTTP 请求超时，下次请求优先尝试其他地址。每个地址都验证原始域名及 CA 证书。串口请求诊断包含 `cloud_http` 和 `cloud_ip`，`STATUS` 的 `heartbeat_age_s` 表示距最近一次成功心跳的秒数。`WiFi=1` 只表示局域网已连接，还应确认云端 HTTP 200 及心跳持续更新。
+
+每次上传创建独立 HTTPS 连接，连接异常或响应解析失败时关闭并重试。绑定请求与后台网络任务串行使用传输状态，推理侧的计数和本地保存不等待网络锁。串口 `tls_error` 只有负数表示底层 TLS 错误。
+
+若持续 45 秒没有取得 IP，示例会重新应用已保存的 Wi-Fi 配置并重试，`recoveries` 显示恢复次数。`associated=1` 表示已经关联接入点，仍需取得 IP 才能访问云端。重连过程不擦除 NVS、LittleFS 或云端绑定。
+
+部分小型 ESP32-S3 板在默认发射功率下连接不稳定。可以输入 `TXPOWER 2` 或 `TXPOWER 8.5` 保存相应的 dBm 配置并重连，输入 `TXPOWER AUTO` 恢复默认 19.5 dBm。本次实测板使用 2 dBm 后完成联网及断电恢复；其他硬件应按现场信号覆盖验证。`STATUS` 的 `tx_qdbm` 使用四分之一 dBm，数值 8 表示 2 dBm。这个配置不会固定设备 IP。
+
+完整观测与边界见 [1.2.2 网络验证记录](../../docs/esp32s3-validation-2026-11-14.md)。设备更换网络后仍使用域名和设备密钥连接，无需再次绑定。
 
 ## 输入真实观测
 

@@ -12,6 +12,7 @@
 #include <atomic>
 #include <memory>
 
+#include "CloudTlsClient.h"
 #include "incident_counter.hpp"
 
 // Transport adapter. Feed this from a real detector or an authenticated local
@@ -23,7 +24,8 @@ class PoseGuardCloud {
     ca_ = rootCA;
     if (!server_.startsWith("https://")) return false;
     lock_ = xSemaphoreCreateMutex();
-    if (!lock_ || !LittleFS.begin(false)) return false;
+    transportLock_ = xSemaphoreCreateMutex();
+    if (!lock_ || !transportLock_ || !LittleFS.begin(false)) return false;
     store_.begin("poseguard", false);
     token_ = store_.getString("token");
     device_ = store_.getString("device");
@@ -109,7 +111,7 @@ class PoseGuardCloud {
       request["mode"] = mode_;
       request["fps"] = fps_;
       request["people"] = people_;
-      request["firmware"] = "poseguard-esp32s3/1.2.1";
+      request["firmware"] = "poseguard-esp32s3/1.2.2";
       request["clock_synced"] = true;
       request["capabilities"]["external_detections"] = true;
       request["capabilities"]["local_evidence"] = true;
@@ -203,6 +205,7 @@ class PoseGuardCloud {
   String ids_[24], occurred_[24];
   Preferences store_;
   SemaphoreHandle_t lock_{};
+  SemaphoreHandle_t transportLock_{};
   String server_, token_, device_, session_, mode_{"transport_ready"};
   const char* ca_{};
   float fps_{};
@@ -303,13 +306,14 @@ class PoseGuardCloud {
   }
   bool post(const String& route, JsonDocument& input, JsonDocument& output,
             bool authenticated = true) {
-    WiFiClientSecure tls;
-    tls.setCACert(ca_);
+    Guard guard(transportLock_);
+    CloudTlsClient tls(ca_);
     tls.setHandshakeTimeout(8);
     tls.setTimeout(12000);
     HTTPClient http;
     http.setConnectTimeout(6500);
     http.setTimeout(12000);
+    // New connections also work after a NAT, interface or source IP change.
     http.setReuse(false);
     if (!http.begin(tls, server_ + route)) {
       lastHttpStatus_ = -100;
@@ -317,18 +321,29 @@ class PoseGuardCloud {
     }
     http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
     http.addHeader("Content-Type", "application/json");
-    http.setUserAgent("PoseGuard/1.2.1");
+    http.setUserAgent("PoseGuard/1.2.2");
     if (authenticated) http.addHeader("Authorization", "Bearer " + token_);
     String text;
     serializeJson(input, text);
     int status = http.POST(text);
+    tls.noteHttpResult(status);
+    char tlsError[96]{};
+    const int tlsCode = min(0, tls.lastError(tlsError, sizeof tlsError));
+    Serial.printf("cloud_http=%d cloud_ip=%s tls_error=%d\n", status,
+                  tls.connectedAddress().toString().c_str(), tlsCode);
+    if (status <= 0) Serial.printf("cloud_transport_error=%s\n", tlsError);
     lastHttpStatus_ = status;
     if (status >= 200 && status < 300) {
       auto error = deserializeJson(output, http.getString());
+      if (error) {
+        http.setReuse(false);
+        tls.noteHttpResult(-101);
+        lastHttpStatus_ = -101;
+      }
       http.end();
-      if (error) lastHttpStatus_ = -101;
       return !error;
     }
+    http.setReuse(false);
     http.end();
     return false;
   }
