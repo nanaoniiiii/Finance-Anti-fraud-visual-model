@@ -86,7 +86,7 @@ public final class AlertService extends Service {
             return;
         }
         try {
-            String route = "/api/mobile/changes?after=" + cursor + (!bootstrapped ? "&bootstrap=1" : "");
+            String route = "/api/mobile/changes?supports_clear=1&after=" + cursor + (!bootstrapped ? "&bootstrap=1" : "");
             Network.Reply reply = Network.request(route, "GET", "", token);
             if (reply.status == 401) {
                 stopReceiving();
@@ -131,10 +131,19 @@ public final class AlertService extends Service {
         }
     }
     private boolean postNotification(JSONObject change) throws Exception {
-        if (Build.VERSION.SDK_INT >= 24 && !manager.areNotificationsEnabled())
-            return false;
         JSONObject data = change.getJSONObject("data");
         String category = change.optString("category"), entity = change.optString("entity_id");
+        if ("event".equals(category) && "resolved".equals(data.optString("status"))
+            && ("record-disposition".equals(change.optString("action")) || "resolve".equals(change.optString("action")))) {
+            String key = "event-alert-ids:" + entity;
+            for (String value : getSharedPreferences("receiver", 0).getStringSet(key, java.util.Collections.emptySet())) {
+                try { manager.cancel(Integer.parseInt(value)); } catch (NumberFormatException ignored) {}
+            }
+            manager.cancel(1000 + (entity.hashCode() & 0x0fffffff));
+            getSharedPreferences("receiver", 0).edit().remove(key).commit();
+            return true;
+        }
+        if (Build.VERSION.SDK_INT >= 24 && !manager.areNotificationsEnabled()) return false;
         String risk = data.optString("risk_kind");
         String label = "phone_to_ear".equals(risk) ? "疑似通话姿态"
             : "multi_person".equals(risk)          ? "多人进入"
@@ -166,7 +175,15 @@ public final class AlertService extends Service {
                                         .setAutoCancel(true)
                                         .setContentIntent(open(path))
                                         .build();
-        manager.notify(1000 + (entity.hashCode() & 0x0fffffff), notification);
+        int notificationId = 1000 + (entity.hashCode() & 0x0fffffff);
+        String eventId = "event".equals(category) ? entity : data.optString("event_id");
+        if (!eventId.isEmpty()) {
+            String key = "event-alert-ids:" + eventId;
+            java.util.Set<String> ids = new java.util.HashSet<>(getSharedPreferences("receiver", 0).getStringSet(key, java.util.Collections.emptySet()));
+            ids.add(Integer.toString(notificationId));
+            getSharedPreferences("receiver", 0).edit().putStringSet(key, ids).commit();
+        }
+        manager.notify(notificationId, notification);
         return true;
     }
     private void stopReceiving() {

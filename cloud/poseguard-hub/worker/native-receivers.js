@@ -11,6 +11,8 @@ import {
   text,
   uid,
 } from './utils.js';
+import { shouldInterruptMessage } from './message-policy.js';
+import { notificationAllowed } from './notification-policy.js';
 export async function enrollReceiver(env, user, input) {
   const install = identifier(input.installation_id);
   const ids = Array.isArray(input.device_ids)
@@ -58,7 +60,7 @@ async function authenticate(request, env) {
     ?.match(/^Bearer (pgm_[A-Za-z0-9_-]+)$/)?.[1];
   if (!token) throw new ApiError(401, '缺少接收端密钥');
   const receiver = await env.DB.prepare(
-    'SELECT * FROM native_receivers WHERE token_hash=? AND revoked_at IS NULL'
+    'SELECT n.*,u.role AS user_role FROM native_receivers n JOIN users u ON u.id=n.user_id WHERE n.token_hash=? AND n.revoked_at IS NULL'
   )
     .bind(await digest(token))
     .first();
@@ -66,8 +68,12 @@ async function authenticate(request, env) {
   return receiver;
 }
 function allowed(receiver, change) {
+  const content = parse(change.data_json, {});
+  if (receiver.supports_clear && change.category === 'event' && content.status === 'resolved' && ['record-disposition','resolve'].includes(change.action)) return true;
+  if (change.category === 'message') return shouldInterruptMessage(receiver.user_id, change);
   const data = parse(change.data_json, {});
   if (!data.notify) return false;
+  if (!notificationAllowed({id:receiver.user_id,role:receiver.user_role},change)) return false;
   if (change.category === 'notification')
     return data.receiver_id === receiver.id;
   const ids = parse(receiver.device_ids_json, []);
@@ -79,6 +85,10 @@ function allowed(receiver, change) {
 export async function mobileRoute(request, env, url) {
   const receiver = await authenticate(request, env);
   if (url.pathname === '/api/mobile/changes' && request.method === 'GET') {
+    if (url.searchParams.get('supports_clear') === '1' && !receiver.supports_clear) {
+      await env.DB.prepare('UPDATE native_receivers SET supports_clear=1 WHERE id=?').bind(receiver.id).run();
+      receiver.supports_clear = 1;
+    }
     await env.DB.prepare('UPDATE native_receivers SET last_seen=? WHERE id=?')
       .bind(now(), receiver.id)
       .run();
@@ -126,7 +136,7 @@ export async function mobileRoute(request, env, url) {
         'android',
         receiver.id,
         change.data_json,
-        'posted',
+        change.category === 'event' && parse(change.data_json,{}).status === 'resolved' ? 'cleared' : 'posted',
         now(),
         now()
       ),
@@ -134,7 +144,7 @@ export async function mobileRoute(request, env, url) {
         'UPDATE native_receivers SET last_success=?,last_error=NULL WHERE id=?'
       ).bind(now(), receiver.id),
     ]);
-    return json({ ok: true, status: 'posted' });
+    return json({ ok: true, status: change.category === 'event' && parse(change.data_json,{}).status === 'resolved' ? 'cleared' : 'posted' });
   }
   throw new ApiError(404, '移动接收接口不存在');
 }

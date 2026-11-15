@@ -3,6 +3,11 @@ import { createRoot } from 'react-dom/client';
 import DevicePreview from './DevicePreview.jsx';
 import useSettingsDraft from './useSettingsDraft.js';
 import { mailDraft } from './settings-draft.js';
+import PersonalMessages, { InterventionAssignment, MemberAreas } from './PersonalMessages.jsx';
+import NotificationPolicy from './NotificationPolicy.jsx';
+import DispositionForm from './DispositionForm.jsx';
+import { choosePendingAlert, popupKey, postponePendingAlerts } from './popup-state.js';
+import {coalesceReads} from './request-coalescer.js';
 import {
   Activity,
   ArrowDownToLine,
@@ -46,6 +51,7 @@ import {
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import './style.css';
+import './message-popover.css';
 
 const riskName = {
   phone_to_ear: '疑似通话姿态',
@@ -105,7 +111,7 @@ function nativeRequest(path, options) {
     const timeout = setTimeout(() => {
       nativeRequests.delete(id);
       reject(new Error('原生连接超时'));
-    }, 22000);
+    }, 40000);
     nativeRequests.set(id, { resolve, reject, timeout });
     window.PoseGuardNative.request(
       id,
@@ -115,7 +121,7 @@ function nativeRequest(path, options) {
     );
   });
 }
-async function api(path, options = {}) {
+async function performApi(path, options = {}) {
   const retryable =
     !options.method || options.method === 'GET' || path === '/auth/login';
   const attempts = retryable ? 3 : 1;
@@ -179,6 +185,7 @@ async function api(path, options = {}) {
   }
 }
 
+const api=coalesceReads(performApi);
 function Button({
   children,
   icon: Icon,
@@ -383,23 +390,35 @@ function Login({ onDone, notice }) {
   );
 }
 
+const messageUi = { Button, Modal, PanelHeader, Badge, Empty };
+function pageFromPath() {
+  const section = location.pathname.split('/')[1];
+  return ['devices', 'events', 'notifications', 'settings', 'team'].includes(section) ? section : 'overview';
+}
 function App() {
   const [user, setUser] = useState(undefined);
   const [page, setPage] = useState(
-    location.pathname.startsWith('/events')
-      ? 'events'
-      : ['devices', 'notifications', 'settings', 'team'].includes(
-            location.pathname.slice(1)
-          )
-        ? location.pathname.slice(1)
-        : 'overview'
+    pageFromPath
   );
   const [selectedEvent, setSelectedEvent] = useState(
     location.pathname.split('/events/')[1] || null
   );
+  const [selectedMessage, setSelectedMessage] = useState(location.pathname.split('/messages/')[1] || null);
+  const [messageWindowOpen,setMessageWindowOpen] = useState(location.pathname.startsWith('/messages'));
+  const [messagePosition,setMessagePosition] = useState({top:64,right:24});
+  const messageButton = useRef(null);
+  useEffect(()=>{
+    if(!messageWindowOpen||!user)return;
+    const position=()=>{const rect=messageButton.current?.getBoundingClientRect();if(rect){const available=document.documentElement.clientWidth,width=Math.min(440,available-24),right=Math.max(12,Math.min(available-rect.right,available-width-12));setMessagePosition({top:Math.max(12,rect.bottom+10),right,'--message-arrow-right':Math.max(14,available-right-rect.left-rect.width/2-6)+'px'});}};
+    position();window.addEventListener('resize',position);return()=>window.removeEventListener('resize',position);
+  },[messageWindowOpen,user?.id]);
+  const [personalSummary, setPersonalSummary] = useState({ unread: 0, version: 0 });
   const [devices, setDevices] = useState([]);
   const [receivers, setReceivers] = useState([]);
   const [events, setEvents] = useState([]);
+  const [eventsBefore,setEventsBefore] = useState(null);
+  const [loadingOlder,setLoadingOlder] = useState(false);
+  const eventsExpanded = useRef(false);
   const [stats, setStats] = useState(null);
   const [settings, setSettings] = useState(null);
   const [config, setConfig] = useState(null);
@@ -407,6 +426,10 @@ function App() {
   const [testNotice, setTestNotice] = useState(null);
   const [modal, setModal] = useState(null);
   const [urgent, setUrgent] = useState(null);
+  const [pendingAlerts, setPendingAlerts] = useState([]);
+  const popupSnoozes = useRef({});
+  const handlingEvent = useRef(null);
+  useEffect(()=>{try{popupSnoozes.current=JSON.parse(sessionStorage.getItem('poseguard-popup-snoozes:'+user?.id)||'{}');}catch{popupSnoozes.current={};}},[user?.id]);
   const [connection, setConnection] = useState('connecting');
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
@@ -419,6 +442,14 @@ function App() {
   const socket = useRef(null);
   const alertAudio = useRef(null);
   const [sound, setSound] = useState(false);
+  const lastAuthenticatedId = useRef(null);
+  useEffect(()=>{
+    if(lastAuthenticatedId.current&&lastAuthenticatedId.current!==user?.id){
+      api.clear();reloadVersion.current++;setUrgent(null);setTestNotice(null);setPendingAlerts([]);setSelectedMessage(null);setMessageWindowOpen(false);setPersonalSummary({unread:0,version:0});seen.current.clear();cursor.current=0;
+      window.PoseGuardNative?.disableNotifications?.();
+    }
+    lastAuthenticatedId.current=user?.id||null;
+  },[user?.id]);
   const [notificationPermission, setNotificationPermission] = useState(
     window.PoseGuardNative
       ? 'default'
@@ -456,19 +487,16 @@ function App() {
     const version = ++reloadVersion.current;
     if (savedSettings?.rules && savedSettings?.mail) setSettings(savedSettings);
     try {
-      const [fleet, feed, counts, prefs] = await Promise.all([
-        api('/devices'),
-        api('/events'),
-        api('/stats'),
-        api('/settings'),
-      ]);
-      if (version !== reloadVersion.current) return;
-      setDevices(fleet.devices);
-      setReceivers(fleet.receivers);
-      setEvents(feed.events);
-      setStats(counts);
-      setSettings(prefs);
-      setError('');
+      const reads=[
+        ['/devices',fleet=>{setDevices(fleet.devices);setReceivers(fleet.receivers);}],
+        ['/events',feed=>{setEvents(previous=>eventsExpanded.current?[...new Map([...previous,...feed.events].map(event=>[event.id,event])).values()].sort((a,b)=>b.updated_at.localeCompare(a.updated_at)):feed.events);if(!eventsExpanded.current)setEventsBefore(feed.next_before||null);}],
+        ['/stats',setStats],['/settings',setSettings],['/personal-messages/summary',setPersonalSummary],
+        ['/pending-alerts',pending=>{setPendingAlerts(pending.alerts);setUrgent(previous=>choosePendingAlert(previous,pending.alerts,popupSnoozes.current,handlingEvent.current));}],
+      ];
+      const results=await Promise.allSettled(reads.map(([path,apply])=>api(path).then(value=>{if(version===reloadVersion.current)apply(value);}).catch(error=>{if(version===reloadVersion.current&&error.status===401)setUser(null);throw error;})));
+      if(version!==reloadVersion.current)return;
+      const failed=results.find(result=>result.status==='rejected');
+      setError(failed?'部分信息暂未同步：'+failed.reason.message:'');
     } catch (e) {
       if (version !== reloadVersion.current) return;
       if (e.status === 401) setUser(null);
@@ -482,12 +510,14 @@ function App() {
     seen.current.add(key);
     if (seen.current.size > 500)
       seen.current = new Set([...seen.current].slice(-300));
+    if (change.category === 'message' && change.data?.kind === 'intervention' && change.data?.notify && change.data.recipient_id === user.id)
+      raisePopup({ ...change.data, id: change.entity_id, personal: true });
     if (change.category === 'notification' && change.data?.test)
       setTestNotice(change.data);
     if (change.category === 'device' && change.data?.notify)
       notify(`${change.data.title}：${change.data.name}`);
     if (change.category === 'event' && change.data?.notify) {
-      setUrgent({ ...change.data, id: change.entity_id });
+      raisePopup({ ...change.data, id: change.entity_id, event_id:change.entity_id, severity:change.data.notification_severity??change.data.severity });
       if (sound && alertAudio.current) {
         try {
           const oscillator = alertAudio.current.createOscillator();
@@ -509,18 +539,12 @@ function App() {
       .then(setConfig)
       .catch(() => {});
     if ('serviceWorker' in navigator && !window.PoseGuardNative)
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
+      navigator.serviceWorker.register('/sw.js', {updateViaCache:'none'}).catch(() => {});
     const handler = () => {
-      setPage(
-        location.pathname.startsWith('/events')
-          ? 'events'
-          : ['devices', 'notifications', 'settings', 'team'].includes(
-                location.pathname.slice(1)
-              )
-            ? location.pathname.slice(1)
-            : 'overview'
-      );
+      setPage(pageFromPath());
       setSelectedEvent(location.pathname.split('/events/')[1] || null);
+      setSelectedMessage(location.pathname.split('/messages/')[1] || null);
+      setMessageWindowOpen(location.pathname.startsWith('/messages'));
     };
     window.addEventListener('popstate', handler);
     return () => window.removeEventListener('popstate', handler);
@@ -536,6 +560,7 @@ function App() {
         const result = await api(
           '/changes?after=' + cursor.current + (initial ? '&bootstrap=1' : '')
         );
+        if(stopped)return;
         if (initial) {
           initial = false;
           cursor.current = result.cursor || 0;
@@ -552,6 +577,7 @@ function App() {
       socket.current = ws;
       ws.onopen = () => setConnection('live');
       ws.onmessage = (e) => {
+        if(stopped)return;
         if (e.data === 'pong') return;
         try {
           changeEvent(JSON.parse(e.data));
@@ -588,20 +614,51 @@ function App() {
       .catch((e) => notify(e.message));
   }, [selectedEvent, events, user?.id]);
   function navigate(next, id = null) {
+    if(next==='messages') {setMessageWindowOpen(true);setSelectedMessage(id);setMobileMenu(false);history.pushState({},'','/messages'+(id?'/'+id:''));return;}
+    setMessageWindowOpen(false);
     setPage(next);
-    setSelectedEvent(id);
+    setSelectedEvent(next === 'events' ? id : null);
+    setSelectedMessage(next === 'messages' ? id : null);
     setMobileMenu(false);
     history.pushState(
       {},
       '',
-      next === 'events'
-        ? '/events' + (id ? '/' + id : '')
+      ['events', 'messages'].includes(next)
+        ? '/' + next + (id ? '/' + id : '')
         : next === 'overview'
           ? '/'
           : '/' + next
     );
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
+  function raisePopup(alert) {
+    if(handlingEvent.current||(popupSnoozes.current[popupKey(alert)]||0)>Date.now())return;
+    setUrgent(alert);
+  }
+  async function loadOlderEvents() {
+    if(!eventsBefore||loadingOlder)return;setLoadingOlder(true);
+    try{const result=await api('/events?before='+encodeURIComponent(eventsBefore));eventsExpanded.current=true;setEvents(previous=>[...new Map([...previous,...result.events].map(event=>[event.id,event])).values()].sort((a,b)=>b.updated_at.localeCompare(a.updated_at)));setEventsBefore(result.next_before||null);}catch(error){notify(error.message);}finally{setLoadingOlder(false);}
+  }
+  function postponePopup(alert) {
+    popupSnoozes.current=postponePendingAlerts(alert,pendingAlerts,popupSnoozes.current);
+    try{sessionStorage.setItem('poseguard-popup-snoozes:'+user.id,JSON.stringify(popupSnoozes.current));}catch{}
+    setUrgent(null);
+  }
+  function openDisposition(id) {
+    closeMessageWindow();
+    handlingEvent.current=id;setUrgent(null);setModal({type:'disposition',id});
+  }
+  function closeMessageWindow() {
+    setMessageWindowOpen(false);setSelectedMessage(null);
+    if(location.pathname.startsWith('/messages'))history.replaceState({},'',page==='overview'?'/':page==='events'?'/events'+(selectedEvent?'/'+selectedEvent:''):'/'+page);
+  }
+  function closeDisposition() {handlingEvent.current=null;setModal(null);reload();}
+  useEffect(()=>{
+    if(!user)return;
+    const resume=()=>{if(document.visibilityState==='visible')reload();};
+    window.addEventListener('focus',resume);window.addEventListener('poseguard-resume',resume);document.addEventListener('visibilitychange',resume);
+    return()=>{window.removeEventListener('focus',resume);window.removeEventListener('poseguard-resume',resume);document.removeEventListener('visibilitychange',resume);};
+  },[user?.id]);
   async function action(id, kind, note = '') {
     setBusy(true);
     try {
@@ -720,6 +777,7 @@ function App() {
     devices: '设备与绑定',
     events: '事件中心',
     notifications: '通知与成员',
+    messages: '个人消息',
     settings: '系统设置',
   };
   const nav = [
@@ -762,6 +820,7 @@ function App() {
               {key === 'events' && waiting.length > 0 && (
                 <span className="nav-count">{waiting.length}</span>
               )}
+              {key === 'messages' && personalSummary.unread > 0 && <span className="nav-count">{personalSummary.unread}</span>}
             </button>
           ))}
         </nav>
@@ -811,11 +870,13 @@ function App() {
             </span>
             <button
               className="icon-button"
-              title="通知设置"
-              onClick={() => navigate('notifications')}
+              ref={messageButton}
+              title="个人消息"
+              aria-label={personalSummary.unread ? `个人消息，${personalSummary.unread} 条未读` : '个人消息'}
+              onClick={() => messageWindowOpen?closeMessageWindow():navigate('messages')}
             >
               <Bell size={20} />
-              {waiting.length > 0 && <i className="notification-dot" />}
+              {personalSummary.unread > 0 && <span className="personal-message-count">{personalSummary.unread > 99 ? '99+' : personalSummary.unread}</span>}
             </button>
             <span className="avatar small">{user.name.slice(0, 1)}</span>
           </div>
@@ -838,6 +899,8 @@ function App() {
                       ? '从首次触发到升级、确认和介入，完整追踪每一次处置。'
                       : page === 'notifications'
                         ? '网页、手机和邮箱使用同一套通知偏好。'
+                        : page === 'messages'
+                          ? '接收个人消息、巡查要求与指定介入通知，跟进每一次协作。'
                         : '累计规则、发信账号和登录口令，统一配置。'}
               </p>
             </div>
@@ -845,7 +908,7 @@ function App() {
               <Button icon={RefreshCw} onClick={reload}>
                 刷新
               </Button>
-              {user.role === 'owner' && (
+              {user.role === 'owner' && page !== 'messages' && (
                 <Button
                   icon={Plus}
                   kind="primary"
@@ -1135,6 +1198,7 @@ function App() {
 
           {page === 'events' && (
             <>
+              {pendingAlerts.length>0&&<div className="pending-alert-banner"><span>{pendingAlerts.length} 条提醒尚待人工处置。“稍后处理”只暂时收起弹窗。</span><Button onClick={()=>{popupSnoozes.current={};try{sessionStorage.removeItem('poseguard-popup-snoozes:'+user.id);}catch{}setUrgent(choosePendingAlert(null,pendingAlerts,{}));}}>继续处理提醒</Button></div>}
               {selectedEvent && detail ? (
                 <section className="event-detail">
                   <button
@@ -1180,7 +1244,7 @@ function App() {
                       <Button
                         icon={CheckCheck}
                         onClick={() =>
-                          setModal({ type: 'resolve', id: selectedEvent })
+                          openDisposition(selectedEvent)
                         }
                       >
                         记录处置
@@ -1293,11 +1357,12 @@ function App() {
                                 {{
                                   created: '特殊状态超过阈值',
                                   escalated: '风险程度升级',
-                                  resolved: '端侧状态解除',
+                                  resolved: '端侧检测已结束',
                                   interrupted: '端侧采集中断',
                                   ack: '工作人员确认',
                                   resolve: '处置完成',
                                   'request-intervention': '呼叫工作人员介入',
+                                  'record-disposition': '人工处置记录',
                                 }[u.action] || u.action}
                               </b>
                               <span>
@@ -1409,6 +1474,7 @@ function App() {
                       试试调整筛选，或等待设备上报。
                     </Empty>
                   )}
+                  {eventsBefore&&<div className="message-more"><Button busy={loadingOlder} onClick={loadOlderEvents}>加载更早事件</Button></div>}
                 </section>
               )}
             </>
@@ -1416,6 +1482,7 @@ function App() {
 
           {page === 'notifications' && (
             <>
+              <NotificationPolicy api={api} ui={messageUi} settings={settings} user={user} notify={notify} reload={reload}/>
               <div className="install-grid">
                 <section className="panel install-card">
                   <span className="install-icon">
@@ -1601,6 +1668,11 @@ function App() {
           </footer>
         </div>
       </main>
+      {messageWindowOpen&&<section className="message-popover" style={messagePosition} role="dialog" aria-modal="false" aria-label="个人消息窗口">
+        <header className="message-popover-header"><b>个人消息{personalSummary.unread>0&&<span className="nav-count">{personalSummary.unread}</span>}</b><button className="icon-button" aria-label="关闭个人消息窗口" onClick={closeMessageWindow}><X size={17}/></button></header>
+        <div className="message-popover-body"><PersonalMessages compact api={api} ui={messageUi} user={user} notify={notify} reload={reload} devices={active}
+          selectedId={selectedMessage} onSelect={id=>navigate('messages',id)} onOpenEvent={id=>navigate('events',id)} onDisposition={openDisposition} refreshKey={personalSummary.version}/></div>
+      </section>}
       <nav className="mobile-nav">
         {nav
           .filter(([key]) => key !== 'notifications')
@@ -1667,20 +1739,9 @@ function App() {
         <DevicePreview device={modal.device} user={user} api={api} Modal={Modal}
           Button={Button} onClose={() => setModal(null)} />
       )}
-      {['resolve', 'intervention'].includes(modal?.type) && (
-        <ActionModal
-          kind={modal.type}
-          busy={busy}
-          onClose={() => setModal(null)}
-          onSubmit={(note) =>
-            action(
-              modal.id,
-              modal.type === 'resolve' ? 'resolve' : 'request-intervention',
-              note
-            )
-          }
-        />
-      )}
+      {modal?.type === 'intervention' && <InterventionAssignment api={api} ui={messageUi} user={user} eventId={modal.id} onClose={() => setModal(null)}
+        onSent={async result => { setModal(null); notify('指定介入请求已记录'); const external=result.messages.find(message=>message.is_external); if(external)navigate('messages',external.id); await reload(); }} />}
+      {['resolve','disposition'].includes(modal?.type) && <DispositionForm api={api} ui={messageUi} eventId={modal.id} user={user} onClose={closeDisposition} onSaved={async()=>{handlingEvent.current=null;setModal(null);notify('处置记录已保存，处理人与时间已同步');await reload();}}/>}
       {modal === 'profile' && (
         <Modal title="当前账号" onClose={() => setModal(null)}>
           <div className="modal-body">
@@ -1702,8 +1763,8 @@ function App() {
       )}
       {urgent && (
         <Modal
-          title={urgent.severity >= 3 ? '工作人员介入请求' : '新的设备预警'}
-          onClose={() => setUrgent(null)}
+          title={urgent.personal ? '指定工作人员介入通知' : urgent.severity >= 3 ? '工作人员介入请求' : '新的设备预警'}
+          onClose={() => postponePopup(urgent)}
         >
           <div className="modal-body urgent-modal">
             <span className={'large-risk level' + urgent.severity}>
@@ -1712,25 +1773,24 @@ function App() {
             <Badge type={'level' + urgent.severity}>
               {levels[urgent.severity]}
             </Badge>
-            <h2>{riskName[urgent.risk_kind]}</h2>
+            <h2>{urgent.personal ? urgent.title : riskName[urgent.risk_kind]}</h2>
             <p>
-              {urgent.device_name} · 累计 {urgent.observed_frames} 帧特殊状态
+              {urgent.personal ? `发出人：${urgent.sender_name} · 区域：${urgent.area || '见消息详情'}` : `${urgent.device_name} · 累计 ${urgent.observed_frames} 帧特殊状态`}
             </p>
             <p className="muted">
-              {urgent.model_state === 'candidate'
+              {urgent.personal ? urgent.body : urgent.signal_ended_at ? '检测状态已恢复，事件仍待人工核查与处置；尚未提交人工处理记录。' : urgent.model_state === 'candidate'
                 ? '候选状态累计触发，请结合现场情况核查。'
                 : '检测到持续特殊姿态，请工作人员及时关注。'}
             </p>
             <div className="modal-actions">
-              <Button onClick={() => setUrgent(null)}>稍后查看</Button>
+              <Button onClick={() => postponePopup(urgent)}>稍后处理</Button>
               <Button
                 kind="primary"
                 onClick={() => {
-                  navigate('events', urgent.id);
-                  setUrgent(null);
+                  openDisposition(urgent.personal?urgent.event_id:urgent.id);
                 }}
               >
-                查看并处理 <ArrowRight size={16} />
+                已确认 <ArrowRight size={16} />
               </Button>
             </div>
           </div>
@@ -1932,16 +1992,18 @@ function DeviceCard({ device: d, onOpen, onPreview }) {
 }
 function EventTable({ events, onOpen }) {
   return (
-    <div className="event-table">
+    <div className="event-table with-handlers">
       <div className="event-table-head">
         <span>风险事件 / 设备</span>
         <span>风险程度</span>
         <span>发生时间</span>
         <span>状态</span>
+        <span>处理人</span>
+        <span>处理时间</span>
         <span />
       </div>
       {events.map((e) => (
-        <button className="event-row" key={e.id} onClick={() => onOpen(e.id)}>
+        <button className={`event-row ${e.status !== 'resolved' ? 'pending-event' : ''}`} key={e.id} onClick={() => onOpen(e.id)}>
           <div className="event-primary">
             <span className={'event-symbol level' + e.severity}>
               {e.severity >= 3 ? (
@@ -1965,7 +2027,9 @@ function EventTable({ events, onOpen }) {
             {timeFormat(e.occurred_at)}
             {e.clock_warning ? <small>设备时间待核查</small> : null}
           </span>
-          <span className="event-state">{stateName[e.status]}</span>
+          <span className="event-state">{stateName[e.status]}{e.disposition&&<small>{({false_positive:'误检',not_intervened:'未介入',intervened:'已介入',no_risk:'无风险'})[e.disposition]}</small>}</span>
+          <span className="event-handler">{e.handled_by_name || '—'}</span>
+          <span className="event-handled-time">{timeFormat(e.handled_at)}</span>
           <ChevronRight size={17} />
         </button>
       ))}
@@ -2268,6 +2332,7 @@ function Members({ notify }) {
               <small>{u.email}</small>
             </div>
             <Badge>{u.role === 'owner' ? '管理员' : '工作人员'}</Badge>
+            <MemberAreas member={u} api={api} Button={Button} notify={notify} />
           </div>
         ))}
       </div>

@@ -4,6 +4,13 @@
   const fallback = document.querySelector('[data-pg-boot]');
   if (!fallback) return;
   const root = fallback.parentElement;
+  if ('serviceWorker' in navigator && !window.PoseGuardNative) {
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (root.contains(fallback)) location.reload();
+    });
+    navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
+      .then((registration) => registration.update()).catch(() => {});
+  }
   function failed() {
     if (!root.contains(fallback)) return;
     fallback.querySelector('p').textContent =

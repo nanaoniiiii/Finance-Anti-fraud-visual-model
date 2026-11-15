@@ -12,6 +12,8 @@ import {
   uid,
 } from './utils.js';
 import { mailConfigured, sendMail } from './mail.js';
+import { attachNotificationScope, notificationAllowed } from './notification-policy.js';
+import { messageAudience } from './message-policy.js';
 
 export function validateSubscription(subscription) {
   let url;
@@ -42,11 +44,12 @@ export function validateSubscription(subscription) {
     throw new ApiError(400, '推送密钥格式错误');
   return subscription;
 }
-export async function emitChange(env, category, entityId, action, data) {
+export async function emitChange(env, category, entityId, action, data, audience = '[]') {
+  data = await attachNotificationScope(env, category, data);
   const row = await env.DB.prepare(
-    'INSERT INTO changes(category,entity_id,action,data_json,created_at) VALUES(?,?,?,?,?) RETURNING seq'
+    'INSERT INTO changes(category,entity_id,action,data_json,created_at,audience_json) VALUES(?,?,?,?,?,?) RETURNING seq'
   )
-    .bind(category, entityId, action, JSON.stringify(data), now())
+    .bind(category, entityId, action, JSON.stringify(data), now(), audience)
     .first();
   const change = {
     seq: row.seq,
@@ -54,8 +57,13 @@ export async function emitChange(env, category, entityId, action, data) {
     entity_id: entityId,
     action,
     data,
+    audience_json: audience,
     created_at: now(),
   };
+  await broadcastChange(env, change);
+  return change;
+}
+export async function broadcastChange(env, change) {
   try {
     const room = env.ROOMS.get(env.ROOMS.idFromName('workspace'));
     await room.fetch('https://room/internal/broadcast', {
@@ -63,7 +71,6 @@ export async function emitChange(env, category, entityId, action, data) {
       body: JSON.stringify(change),
     });
   } catch {}
-  return change;
 }
 export async function queueEventNotifications(env, event, change) {
   const mail = { ...defaultMail, ...(await readSetting(env, 'mail', {})) };
@@ -91,9 +98,10 @@ export async function queueEventNotifications(env, event, change) {
       status: mail.enabled && configured ? 'pending' : 'blocked',
     });
   const subscriptions = (
-    await env.DB.prepare('SELECT * FROM push_subscriptions').all()
+    await env.DB.prepare('SELECT p.*,u.role FROM push_subscriptions p JOIN users u ON u.id=p.user_id').all()
   ).results;
   for (const sub of subscriptions) {
+    if (!notificationAllowed({id:sub.user_id,role:sub.role},change)) continue;
     const ids = parse(sub.device_ids_json, []);
     if (ids.length && !ids.includes(event.device_id)) continue;
     jobs.push({
@@ -197,6 +205,7 @@ export async function processJobs(env) {
         )
           .bind(providerId, now(), job.id)
           .run();
+        if (payload.personal_message_id) await emitChange(env,'message',payload.personal_message_id,'delivery',{message_id:payload.personal_message_id,notify:false},messageAudience(payload.sender_id,payload.recipient_id||null));
       } catch (error) {
         const message = String(error.message || '通知发送失败').slice(0, 240);
         const limited = error.status === 429;
@@ -227,6 +236,8 @@ export async function processJobs(env) {
           )
             .bind(message, job.target)
             .run();
+        const personalPayload = parse(job.payload_json,{});
+        if (personalPayload.personal_message_id) await emitChange(env,'message',personalPayload.personal_message_id,'delivery',{message_id:personalPayload.personal_message_id,notify:false},messageAudience(personalPayload.sender_id,personalPayload.recipient_id||null));
       }
     })
   );

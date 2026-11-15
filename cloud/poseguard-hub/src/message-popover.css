@@ -1,0 +1,211 @@
+.message-popover {
+  position: fixed;
+  z-index: 40;
+  width: min(440px, calc(100% - 24px));
+  max-height: calc(100dvh - 90px);
+  background: #fff;
+  border: 1px solid #dde5ec;
+  border-radius: 14px;
+  box-shadow: 0 12px 42px #14233226;
+  display: flex;
+  flex-direction: column;
+}
+.message-popover::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  right: var(--message-arrow-right, 14px);
+  width: 11px;
+  height: 11px;
+  background: #fff;
+  border-left: 1px solid #dde5ec;
+  border-top: 1px solid #dde5ec;
+  transform: rotate(45deg);
+}
+.message-popover-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 15px;
+  border-bottom: 1px solid #e5eaf0;
+  background: #fff;
+  border-radius: 14px 14px 0 0;
+}
+.message-popover-header > b {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+.message-popover-header .icon-button {
+  width: 28px;
+  height: 28px;
+}
+.message-popover-body {
+  overflow: auto;
+  overscroll-behavior: contain;
+  max-height: min(600px, calc(100dvh - 150px));
+  border-radius: 0 0 14px 14px;
+  min-height: 100px;
+}
+.message-popover .personal-messages-panel {
+  margin: 0;
+  border: 0;
+  box-shadow: none;
+  border-radius: 0;
+}
+.message-popover .panel-header {
+  padding: 14px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.message-popover .panel-header h2 {
+  font-size: 13px;
+}
+.message-popover .panel-header p {
+  font-size: 11px;
+  line-height: 1.6;
+}
+.message-popover .button {
+  font-size: 12px;
+  padding: 9px 11px;
+}
+.message-popover .message-toolbar {
+  padding: 0 14px 14px;
+  gap: 12px;
+}
+.message-popover .message-tabs {
+  width: 100%;
+}
+.message-popover .message-tabs button {
+  flex: 1;
+  padding: 8px 6px;
+  font-size: 12px;
+}
+.message-popover .message-filters {
+  width: 100%;
+  gap: 9px;
+  align-items: end;
+}
+.message-popover .message-filters label {
+  font-size: 11px;
+  gap: 6px;
+}
+.message-popover .message-filters select {
+  min-width: 100px;
+  font-size: 12px;
+  max-width: 155px;
+  min-height: 36px;
+}
+.message-popover .personal-message-item {
+  padding: 15px 14px;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+.message-popover .message-kind-symbol {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+}
+.message-popover .message-title-row b {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.message-popover .personal-message-preview {
+  font-size: 12px;
+}
+.message-popover .message-item-meta {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.message-popover .message-item-meta small {
+  font-size: 10px;
+}
+.message-popover .message-people {
+  font-size: 11px;
+  gap: 5px;
+}
+.message-popover .message-form-pair,
+.message-popover .message-recipient-list {
+  grid-template-columns: 1fr;
+}
+.message-popover .modal-body {
+  padding: 15px;
+}
+.message-popover .message-inline-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #fff;
+  padding: 13px 15px 11px;
+  border-bottom: 1px solid #e6ebf0;
+}
+.message-popover .message-inline-header h3 {
+  font-size: 14px;
+  line-height: 1.6;
+  margin: 9px 0 0;
+  overflow-wrap: anywhere;
+}
+.message-popover .message-detail {
+  gap: 15px;
+}
+.message-popover .message-meta {
+  padding: 12px;
+  gap: 12px;
+}
+.message-popover .message-meta dd {
+  font-size: 12px;
+}
+.message-popover .message-body {
+  font-size: 13px;
+}
+.message-popover .modal-actions {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.message-filters label.message-unread {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  align-self: end;
+  padding-bottom: 9px;
+}
+.staff-option > label {
+  flex-direction: row;
+  text-align: left;
+}
+.staff-option > label > span {
+  text-align: left;
+}
+.staff-option input {
+  margin: 0;
+}
+.event-state small {
+  display: block;
+  margin-top: 5px;
+  color: #8994a4;
+  font-size: 10px;
+}
+@media(max-width:760px) {
+  .event-table.with-handlers .event-table-head {display:none;}
+  .event-table.with-handlers .event-row {display:grid;min-width:0;width:100%;grid-template-columns:minmax(0,1fr) auto;gap:9px 12px;position:relative;padding:17px 16px;}
+  .event-table.with-handlers .event-primary {grid-column:1/-1;grid-row:1;}
+  .event-table.with-handlers .event-primary small {white-space:normal;max-width:none;overflow-wrap:anywhere;}
+  .event-table.with-handlers .event-row>span:nth-of-type(1) {display:inline-flex;grid-column:1;grid-row:2;}
+  .event-table.with-handlers .event-state {display:flex;align-items:center;gap:6px;grid-column:2;grid-row:2;}
+  .event-table.with-handlers .event-state small {margin:0;}
+  .event-table.with-handlers .event-time {display:block;grid-column:1/-1;grid-row:3;font-size:11px;}
+  .event-table.with-handlers .event-time::before {content:'发生：';}
+  .event-table.with-handlers .event-handler {display:block;grid-column:1;grid-row:4;font-size:11px;}
+  .event-table.with-handlers .event-handler::before {content:'处理人：';}
+  .event-table.with-handlers .event-handled-time {display:block;grid-column:2;grid-row:4;font-size:11px;}
+  .event-table.with-handlers .event-handled-time::before {content:'处理：';}
+  .event-table.with-handlers .event-row>svg {display:none;}
+}

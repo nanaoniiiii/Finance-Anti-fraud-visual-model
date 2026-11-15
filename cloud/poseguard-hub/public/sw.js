@@ -1,4 +1,11 @@
-const CACHE = 'poseguard-shell-v1';
+const CACHE = 'poseguard-shell-v1.5.0';
+function validAsset(response, url) {
+  const type = response?.headers.get('Content-Type') || '';
+  if (!response?.ok || type.includes('text/html')) return false;
+  if (url.pathname.endsWith('.js')) return /javascript|ecmascript/.test(type);
+  if (url.pathname.endsWith('.css')) return type.includes('text/css');
+  return true;
+}
 self.addEventListener('install', (event) => {
   self.skipWaiting();
   event.waitUntil(
@@ -36,9 +43,9 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       caches.open(CACHE).then(async (c) => {
         const old = await c.match(event.request);
-        if (old) return old;
+        if (old && validAsset(old, u)) return old;
         const response = await fetch(event.request);
-        if (response.ok) c.put(event.request, response.clone());
+        if (validAsset(response, u)) c.put(event.request, response.clone());
         return response;
       })
     );

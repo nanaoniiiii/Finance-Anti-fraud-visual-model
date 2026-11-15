@@ -1,6 +1,7 @@
 import { defaultMail, now, parse, readSetting, uid } from './utils.js';
 import { emitChange, processJobs } from './notify.js';
 import { mailConfigured } from './mail.js';
+import { notificationAllowed } from './notification-policy.js';
 const faultModes = new Set([
   'inference_unavailable',
   'inference_stalled',
@@ -78,9 +79,10 @@ async function transition(env, device, state, detail, ctx) {
       },
       status: mail.enabled && configured ? 'pending' : 'blocked',
     });
-  const subs = (await env.DB.prepare('SELECT * FROM push_subscriptions').all())
+  const subs = (await env.DB.prepare('SELECT p.*,u.role FROM push_subscriptions p JOIN users u ON u.id=p.user_id').all())
     .results;
   for (const sub of subs) {
+    if (!notificationAllowed({id:sub.user_id,role:sub.role},change)) continue;
     const ids = parse(sub.device_ids_json, []);
     if (!ids.length || ids.includes(device.id))
       jobs.push({

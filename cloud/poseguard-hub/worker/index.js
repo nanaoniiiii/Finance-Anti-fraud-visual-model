@@ -55,6 +55,11 @@ export { AgentlyMailRoom } from './agently-room.js';
 import { enrollReceiver, mobileRoute } from './native-receivers.js';
 import { updateDeviceState, checkOfflineDevices } from './device-status.js';
 import { connectPreview, cameraRoute, revokePreview } from './preview-room.js';
+import { changeVisible, userTags } from './message-policy.js';
+import { personalMessageRoute } from './personal-messages.js';
+import { changeForUser, defaultNotificationPolicy, normalizeNotificationPolicy } from './notification-policy.js';
+import { dispositionRoute } from './dispositions.js';
+import { pendingAlertRoute } from './pending-alerts.js';
 export { PreviewRoom } from './preview-room.js';
 
 const list = async (statement) => (await statement.all()).results;
@@ -94,6 +99,7 @@ async function publicSettings(env) {
       password_set: !!mail.password_cipher,
       password_cipher: undefined,
     },
+    notification_policy: normalizeNotificationPolicy(await readSetting(env, 'notification_policy', defaultNotificationPolicy)),
     notification_permissions:
       '浏览器和手机需分别授权通知；邮件服务接受不等于收件箱送达',
   };
@@ -104,9 +110,12 @@ export class EventRoom extends DurableObject {
     const url = new URL(request.url);
     if (url.pathname === '/internal/broadcast' && request.method === 'POST') {
       const value = await request.text();
+      const change = JSON.parse(value);
       for (const ws of this.ctx.getWebSockets()) {
+        if (!changeVisible(this.ctx.getTags(ws), change)) continue;
         try {
-          ws.send(value);
+          const tags = this.ctx.getTags(ws);
+          ws.send(JSON.stringify(changeForUser({id:tags.find(tag=>tag.startsWith('user:'))?.slice(5),role:tags.includes('role:owner')?'owner':'staff'},change)));
         } catch {
           try {
             ws.close();
@@ -118,14 +127,17 @@ export class EventRoom extends DurableObject {
     if (request.headers.get('Upgrade') !== 'websocket')
       return new Response('Upgrade required', { status: 426 });
     const pair = new WebSocketPair();
-    this.ctx.acceptWebSocket(pair[1]);
+    this.ctx.acceptWebSocket(pair[1], userTags({
+      id: request.headers.get('X-PoseGuard-User'),
+      role: request.headers.get('X-PoseGuard-Role'),
+    }));
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
   webSocketMessage(socket, message) {
     if (message === 'ping') socket.send('pong');
   }
   webSocketClose(socket, code) {
-    socket.close(code);
+    socket.close([1005,1006,1015].includes(code) ? 1000 : code);
   }
 }
 
@@ -249,17 +261,16 @@ async function receiveEvent(request, env, device, input, ctx) {
     input.clock_synced === false;
   const occurred = iso(input.occurred_at, time);
   const ended = ['resolved', 'interrupted'].includes(input.update_type);
-  const severity = Math.max(
-    existing?.severity || 0,
+  const modelSeverity = Math.max(
+    existing?.automatic_severity || 0,
     severityFor(frames, input.model_state, input.confirmed_seen === true, rules)
   );
+  const severity = Math.max(existing?.severity || 0,modelSeverity);
   const shouldNotify =
-    !ended &&
+    existing?.status !== 'resolved' && (!ended || !existing) &&
     (!device.is_test || input.notify_test === true) &&
-    (!existing || severity > existing.severity);
-  const status = ended
-    ? 'resolved'
-    : severity >= 3
+    (!existing || modelSeverity > existing.automatic_severity);
+  const status = existing?.status === 'resolved' ? 'resolved' : severity >= 3
       ? 'intervention_requested'
       : existing?.status || 'open';
   const summary = text(input.summary || '', 500);
@@ -271,6 +282,7 @@ async function receiveEvent(request, env, device, input, ctx) {
     risk_kind: input.risk_kind,
     model_state: input.model_state,
     severity,
+    notification_severity: modelSeverity,
     status,
     observed_frames: frames,
     occurred_at: occurred,
@@ -282,7 +294,7 @@ async function receiveEvent(request, env, device, input, ctx) {
   if (!existing) {
     statements.push(
       env.DB.prepare(
-        'INSERT INTO incidents(id,device_id,client_event_id,risk_kind,model_state,severity,status,observed_frames,revision,occurred_at,received_at,updated_at,resolved_at,staff_requested_at,clock_warning,summary) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+        'INSERT INTO incidents(id,device_id,client_event_id,risk_kind,model_state,severity,status,observed_frames,revision,occurred_at,received_at,updated_at,resolved_at,staff_requested_at,clock_warning,summary,signal_ended_at,automatic_severity) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
       ).bind(
         id,
         device.id,
@@ -296,24 +308,28 @@ async function receiveEvent(request, env, device, input, ctx) {
         occurred,
         time,
         time,
-        ended ? time : null,
+        null,
         severity >= 3 ? time : null,
         clockWarning ? 1 : 0,
-        summary
+        summary,
+        ended ? time : null,
+        modelSeverity
       )
     );
   } else {
     statements.push(
       env.DB.prepare(
-        'UPDATE incidents SET model_state=?,severity=?,status=?,observed_frames=?,revision=?,updated_at=?,resolved_at=?,staff_requested_at=CASE WHEN ? THEN COALESCE(staff_requested_at,?) ELSE staff_requested_at END,clock_warning=?,summary=? WHERE id=? AND revision<?'
+        "UPDATE incidents SET model_state=?,severity=?,automatic_severity=?,status=CASE WHEN status='resolved' THEN status ELSE ? END,observed_frames=?,revision=?,updated_at=?,signal_ended_at=CASE WHEN ? THEN COALESCE(signal_ended_at,?) ELSE signal_ended_at END,staff_requested_at=CASE WHEN ? THEN COALESCE(staff_requested_at,?) ELSE staff_requested_at END,clock_warning=?,summary=? WHERE id=? AND revision<?"
       ).bind(
         input.model_state,
         severity,
+        modelSeverity,
         status,
         frames,
         revision,
         time,
-        ended ? time : null,
+        ended ? 1 : 0,
+        time,
         severity >= 3 ? 1 : 0,
         time,
         clockWarning ? 1 : 0,
@@ -383,6 +399,9 @@ async function receiveEvent(request, env, device, input, ctx) {
     }
     throw error;
   }
+  const savedState = await env.DB.prepare('SELECT status,resolved_at,signal_ended_at,handled_by_name,handled_at,disposition FROM incidents WHERE id=?').bind(id).first();
+  Object.assign(changeData,savedState);
+  changeData.notify = shouldNotify && savedState.status !== 'resolved';
   const change = await emitChange(
     env,
     'event',
@@ -390,7 +409,7 @@ async function receiveEvent(request, env, device, input, ctx) {
     input.update_type,
     changeData
   );
-  if (shouldNotify) {
+  if (changeData.notify) {
     await queueEventNotifications(
       env,
       { ...changeData, id, location: device.location },
@@ -412,7 +431,7 @@ async function route(request, env, ctx) {
     return json({
       ok: true,
       service: 'poseguard-hub',
-      version: '1.2.0',
+      version: '1.5.0',
       server_time: now(),
     });
   if (path === '/api/public-config')
@@ -508,6 +527,11 @@ async function route(request, env, ctx) {
   }
   if (path.startsWith('/api/mobile/')) return mobileRoute(request, env, url);
   const user = await userAuth(request, env);
+  if (path === '/api/pending-alerts' && method === 'GET') return pendingAlertRoute(env,user);
+  const dispositionResponse = await dispositionRoute(request, env, user, url, ctx);
+  if (dispositionResponse) return dispositionResponse;
+  const personalResponse = await personalMessageRoute(request, env, user, url, ctx);
+  if (personalResponse) return personalResponse;
   const previewPath = path.match(
     /^\/api\/devices\/([^/]+)\/(preview\/connect|camera)$/
   );
@@ -570,7 +594,10 @@ async function route(request, env, ctx) {
     if (request.headers.get('Upgrade') !== 'websocket')
       throw new ApiError(400, '需要 WebSocket');
     checkOrigin(request, env);
-    return env.ROOMS.get(env.ROOMS.idFromName('workspace')).fetch(request);
+    const scoped = new Request(request);
+    scoped.headers.set('X-PoseGuard-User', user.id);
+    scoped.headers.set('X-PoseGuard-Role', user.role);
+    return env.ROOMS.get(env.ROOMS.idFromName('workspace')).fetch(scoped);
   }
   if (path === '/api/changes') {
     if (url.searchParams.get('bootstrap') === '1') {
@@ -590,7 +617,8 @@ async function route(request, env, ctx) {
       ).bind(after)
     );
     return json({
-      changes: rows.map((r) => ({ ...r, data: parse(r.data_json, {}) })),
+      changes: rows.filter(r => changeVisible(userTags(user), r))
+        .map((r) => changeForUser(user, r)),
       cursor: rows.length ? rows.at(-1).seq : after,
     });
   }
@@ -764,13 +792,15 @@ async function route(request, env, ctx) {
         ),
         notifications: await list(
           env.DB.prepare(
-            'SELECT id,channel,target,status,attempts,last_error,created_at,updated_at FROM notification_jobs WHERE incident_id=? ORDER BY created_at DESC'
-          ).bind(id)
+            `SELECT n.id,n.channel,n.target,n.status,n.attempts,n.last_error,n.created_at,n.updated_at FROM notification_jobs n LEFT JOIN changes c ON c.seq=n.change_seq
+              WHERE n.incident_id=? AND (c.category IS NULL OR c.category<>'message' OR ?='owner' OR EXISTS(SELECT 1 FROM json_each(c.audience_json) WHERE value=?)) ORDER BY n.created_at DESC`
+          ).bind(id, user.role, 'user:' + user.id)
         ),
       });
     if (method === 'POST') {
       const input = await body(request, 8000);
       const action = eventPath[2];
+      if (action === 'resolve' && user.role !== 'owner') throw new ApiError(403, '请使用处置分类界面并完成 3 秒确认后提交');
       if (
         (action === 'ack' && event.acknowledged_at) ||
         (action === 'request-intervention' &&
@@ -787,18 +817,18 @@ async function route(request, env, ctx) {
       if (action === 'ack') {
         status = 'acknowledged';
         await env.DB.prepare(
-          'UPDATE incidents SET status=?,acknowledged_at=?,acknowledged_by=?,updated_at=? WHERE id=?'
+          'UPDATE incidents SET status=?,acknowledged_at=?,acknowledged_by=?,updated_at=?,handled_by=?,handled_by_name=?,handled_at=? WHERE id=?'
         )
-          .bind(status, now(), user.name, now(), id)
+          .bind(status, now(), user.name, now(), user.id, user.name, now(), id)
           .run();
       } else if (action === 'resolve') {
         status = 'resolved';
         const note = text(input.note || '', 300);
         if (!note) throw new ApiError(400, '请填写处置结果');
         await env.DB.prepare(
-          'UPDATE incidents SET status=?,resolved_at=?,updated_at=? WHERE id=?'
+          'UPDATE incidents SET status=?,resolved_at=?,updated_at=?,handled_by=?,handled_by_name=?,handled_at=? WHERE id=?'
         )
-          .bind(status, now(), now(), id)
+          .bind(status, now(), now(), user.id, user.name, now(), id)
           .run();
       } else if (action === 'request-intervention') {
         status = 'intervention_requested';
@@ -923,7 +953,13 @@ async function route(request, env, ctx) {
   }
   if (path === '/api/settings' && method === 'PUT') {
     ownerOnly(user);
-    const input = await body(request, 24000);
+    const input = await body(request, 64000);
+    if (input.notification_policy) {
+      const policy = normalizeNotificationPolicy(input.notification_policy);
+      const ids = [...new Set(Object.values(policy).flatMap(rule=>rule.member_ids))];
+      for (const id of ids) if (!await env.DB.prepare('SELECT id FROM users WHERE id=?').bind(id).first()) throw new ApiError(400, '通知范围中有不存在的成员');
+      await saveSetting(env, 'notification_policy', policy);
+    }
     if (input.rules)
       await saveSetting(env, 'rules', validateRules(input.rules));
     if (input.mail) {
@@ -1115,7 +1151,7 @@ async function route(request, env, ctx) {
     return json({
       users: await list(
         env.DB.prepare(
-          'SELECT id,email,name,role,created_at FROM users ORDER BY created_at'
+          'SELECT id,email,name,role,created_at,areas_json FROM users ORDER BY created_at'
         )
       ),
     });
@@ -1209,6 +1245,7 @@ export default {
           Date.now() - (rules.retention_days || 7) * 86400000
         ).toISOString();
         await env.DB.batch([
+          env.DB.prepare('DELETE FROM disposition_confirmations WHERE expires_at<?').bind(Date.now()),
           env.DB.prepare('DELETE FROM snapshots WHERE created_at<?').bind(
             cutoff
           ),

@@ -30,7 +30,7 @@ public final class MainActivity extends Activity {
     private PreviewSocket preview;
     private boolean resumed;
     private boolean migratingAssets;
-    private final ExecutorService requests = Executors.newFixedThreadPool(4);
+    private final ExecutorService requests = Executors.newFixedThreadPool(6);
     @Override
     public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -59,6 +59,18 @@ public final class MainActivity extends Activity {
         web.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                Uri target = request.getUrl();
+                if ("tel".equalsIgnoreCase(target.getScheme())) {
+                    String number = target.getSchemeSpecificPart();
+                    if (request.hasGesture() && number.matches("\\+?[0-9]{5,20}")) {
+                        try {
+                            startActivity(new Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", number, null)));
+                        } catch (android.content.ActivityNotFoundException error) {
+                            Toast.makeText(MainActivity.this, "当前设备没有拨号应用，请使用记录中的号码联系。", Toast.LENGTH_LONG).show();
+                        }
+                    }
+                    return true;
+                }
                 return !trusted(request.getUrl());
             }
             @Override
@@ -184,8 +196,10 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         resumed = true;
-        if (web != null)
+        if (web != null) {
             web.onResume();
+            web.evaluateJavascript("window.dispatchEvent(new Event('poseguard-resume'))", null);
+        }
     }
     @Override
     protected void onPause() {
@@ -247,6 +261,14 @@ public final class MainActivity extends Activity {
                        .areNotificationsEnabled();
         }
         @JavascriptInterface
+        public void disableNotifications() {
+            runOnUiThread(() -> {
+                stopService(new Intent(MainActivity.this, AlertService.class));
+                getSharedPreferences("receiver", 0).edit().clear().commit();
+                getSystemService(android.app.NotificationManager.class).cancelAll();
+            });
+        }
+        @JavascriptInterface
         public void assetsMigrated() {
             getPreferences(0).edit().putBoolean("native_assets_v2", true).commit();
             runOnUiThread(() -> web.reload());
@@ -279,7 +301,7 @@ public final class MainActivity extends Activity {
                     "window.__poseguardNativeResult&&window.__poseguardNativeResult("
                     + JSONObject.quote(id) + "," + status + "," + JSONObject.quote(result) + ")";
                 runOnUiThread(() -> {
-                    if (!isFinishing())
+                    if (!isFinishing() && !isDestroyed() && web != null)
                         web.evaluateJavascript(script, null);
                 });
             });
