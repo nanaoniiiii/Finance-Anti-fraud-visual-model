@@ -54,12 +54,14 @@ import { agentlyCall, publicAgently } from './agently-room.js';
 export { AgentlyMailRoom } from './agently-room.js';
 import { enrollReceiver, mobileRoute } from './native-receivers.js';
 import { updateDeviceState, checkOfflineDevices } from './device-status.js';
-import { connectPreview, cameraRoute, revokePreview } from './preview-room.js';
+import { connectPreview, cameraRoute, revokePreview, httpPreview } from './preview-room.js';
 import { changeVisible, userTags } from './message-policy.js';
 import { personalMessageRoute } from './personal-messages.js';
 import { changeForUser, defaultNotificationPolicy, normalizeNotificationPolicy } from './notification-policy.js';
 import { dispositionRoute } from './dispositions.js';
 import { pendingAlertRoute } from './pending-alerts.js';
+import { networkHints } from './network-hints.js';
+import {noteReadQuota,readQuotaResponse,persistReadQuota,offlineChecksAllowed,notificationTotals} from './db-budget.js';
 export { PreviewRoom } from './preview-room.js';
 
 const list = async (statement) => (await statement.all()).results;
@@ -108,6 +110,15 @@ async function publicSettings(env) {
 export class EventRoom extends DurableObject {
   async fetch(request) {
     const url = new URL(request.url);
+    if (url.pathname === '/internal/db-budget') {
+      if (request.method === 'POST') {
+        const value = await request.json();
+        if (!Number.isSafeInteger(value.until) || value.until < Date.now()-86400000 || value.until > Date.now()+86400000)
+          return new Response('Invalid quota time', {status:400});
+        await this.ctx.storage.put('db_read_quota_until', value.until);
+      }
+      return json({until:await this.ctx.storage.get('db_read_quota_until') || 0});
+    }
     if (url.pathname === '/internal/broadcast' && request.method === 'POST') {
       const value = await request.text();
       const change = JSON.parse(value);
@@ -207,10 +218,14 @@ async function claimDevice(request, env, input) {
     name: enrollment.name,
     platform: enrollment.platform,
   });
+  const boundDevice = await env.DB.prepare(
+    'SELECT is_test FROM devices WHERE id=?'
+  ).bind(id).first();
   return json(
     {
       device_id: id,
       device_token: token,
+      is_test: !!boundDevice.is_test,
       server_url: env.PUBLIC_ORIGIN,
       rules: await rulesFor(env),
       heartbeat_seconds: 30,
@@ -431,8 +446,9 @@ async function route(request, env, ctx) {
     return json({
       ok: true,
       service: 'poseguard-hub',
-      version: '1.5.0',
+      version: '1.6.0',
       server_time: now(),
+      network: await networkHints(env),
     });
   if (path === '/api/public-config')
     return json({
@@ -481,6 +497,9 @@ async function route(request, env, ctx) {
     const device = await deviceAuth(request, env);
     if (path === '/api/device/preview/connect' && method === 'GET')
       return connectPreview(request, env, device, 'publisher');
+    if ((path === '/api/device/preview/control' && method === 'GET') ||
+        (path === '/api/device/preview/frame' && method === 'POST'))
+      return httpPreview(request, env, device);
     if (path === '/api/device/heartbeat' && method === 'POST') {
       const input = await body(request, 20000);
       const health = {
@@ -503,6 +522,7 @@ async function route(request, env, ctx) {
       return json({
         ok: true,
         device_id: device.id,
+        network: await networkHints(env),
         rules: await rulesFor(env, device),
         server_time: now(),
         pending_commands: await list(
@@ -928,9 +948,7 @@ async function route(request, env, ctx) {
     )
       .bind(new Date(Date.now() - 90000).toISOString())
       .first();
-    const notifications = await env.DB.prepare(
-      "SELECT SUM(CASE WHEN status='blocked' THEN 1 ELSE 0 END) AS blocked,SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed FROM notification_jobs"
-    ).first();
+    const notifications = await notificationTotals(env);
     return json({ events: total, devices, notifications, server_time: now() });
   }
   if (path === '/api/settings' && method === 'GET')
@@ -1214,11 +1232,19 @@ export default {
   async fetch(request, env, ctx) {
     try {
       const path = new URL(request.url).pathname;
+      const budget = path.startsWith('/api/') && path !== '/api/health' && path !== '/api/public-config'
+        ? readQuotaResponse(env) : null;
+      if (budget) return secure(budget, request, env);
       const response = path.startsWith('/api/')
         ? await route(request, env, ctx)
         : await env.ASSETS.fetch(request);
       return secure(response, request, env);
     } catch (error) {
+      const until = noteReadQuota(env, error);
+      if (until) {
+        ctx.waitUntil(persistReadQuota(env, until).catch(()=>{}));
+        return secure(readQuotaResponse(env), request, env);
+      }
       const known = error instanceof ApiError;
       if (!known)
         console.error('request_failed', String(error.message).slice(0, 160));
@@ -1238,7 +1264,7 @@ export default {
   async scheduled(_event, env, ctx) {
     ctx.waitUntil(
       (async () => {
-        await checkOfflineDevices(env, ctx);
+        if (await offlineChecksAllowed(env)) await checkOfflineDevices(env, ctx);
         await processJobs(env);
         const rules = await readSetting(env, 'rules', defaultRules);
         const cutoff = new Date(
@@ -1260,7 +1286,11 @@ export default {
             new Date(Date.now() - 30 * 86400000).toISOString()
           ),
         ]);
-      })()
+      })().catch(async(error)=>{
+        const until=noteReadQuota(env,error);
+        if(!until)throw error;
+        await persistReadQuota(env,until);
+      })
     );
   },
 };

@@ -2,7 +2,7 @@ plugins { id 'com.android.application' }
 android {
     namespace 'tech.nanaoni.poseguard'
     compileSdk 36
-    defaultConfig { applicationId 'tech.nanaoni.poseguard'; minSdk 24; targetSdk 36; versionCode 150; versionName '1.5.0' }
+    defaultConfig { applicationId 'tech.nanaoni.poseguard'; minSdk 24; targetSdk 36; versionCode 167; versionName '1.6.0' }
     signingConfigs {
         release {
             if (System.getenv('PG_ANDROID_KEYSTORE')) {

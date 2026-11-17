@@ -27,6 +27,7 @@ public final class AlertService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        Network.refreshRoutes();
         manager = getSystemService(NotificationManager.class);
         if (Build.VERSION.SDK_INT >= 26) {
             NotificationChannel status = new NotificationChannel(

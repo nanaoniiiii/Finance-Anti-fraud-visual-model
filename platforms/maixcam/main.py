@@ -2,6 +2,7 @@
 
 import argparse
 import time
+from pathlib import Path
 
 try:
     from .config import CONFIG
@@ -52,6 +53,7 @@ def build_pipeline(overrides=None, test_timers=False):
     track_manager = TrackManager(
         minimum_confidence=settings["pose_confidence"],
         max_missing_seconds=settings["maximum_missing_seconds"],
+        unconfirmed_missing_seconds=settings["unconfirmed_missing_seconds"],
         smoothing_alpha=settings["smoothing_alpha"],
         maximum_match_cost=settings["maximum_match_cost"],
         min_confirmed_hits=settings["minimum_confirmed_hits"],
@@ -106,10 +108,12 @@ def parse_args(argv=None):
         help="shorten temporal thresholds for an on-device demo",
     )
     parser.add_argument("--cloud-config", default=None, help="bound cloud configuration JSON")
+    parser.add_argument("--benchmark",action="store_true",help="real camera inference and preview with production event recording/upload suppressed")
+    parser.add_argument("--data-directory",default=None,help="local record directory, independent of the installed application")
     return parser.parse_args(argv)
 
 
-def run(*, max_frames=0, no_display=False, test_timers=False, cloud_config=None):
+def run(*, max_frames=0, no_display=False, test_timers=False, cloud_config=None,benchmark=False,data_directory=None,on_ready=None):
     from maix import app, camera, display, image, nn
     try:
         from poseguard.cloud.orientation import CameraOrientation
@@ -117,6 +121,8 @@ def run(*, max_frames=0, no_display=False, test_timers=False, cloud_config=None)
         from cloud_orientation import CameraOrientation
 
     settings = dict(CONFIG)
+    if data_directory:
+        settings["event_path"] = str(Path(data_directory) / "events.jsonl")
     pipeline = build_pipeline(settings, test_timers=test_timers)
     renderer = ScreenRenderer(color_factory=image.Color.from_rgb)
     event_store = EventStore(settings["event_path"])
@@ -135,22 +141,28 @@ def run(*, max_frames=0, no_display=False, test_timers=False, cloud_config=None)
     orientation = CameraOrientation()
     previous_direction = None
     cloud_health = {"mode": "starting", "fps": 0.0, "people": 0, "source": "MaixCAM camera"}
+    try:
+        from poseguard.cloud.edge import CloudRelay, IncidentMonitor
+    except ImportError:
+        from poseguard_cloud import CloudRelay, IncidentMonitor
+
+    def capture_person(box, destination):
+        if cloud_frame is None or not box:
+            return False
+        left, top, right, bottom = [int(value) for value in box]
+        left, top = max(0, left), max(0, top)
+        right, bottom = min(width, right), min(height, bottom)
+        if right <= left or bottom <= top:
+            return False
+        cloud_frame.crop(left, top, right-left, bottom-top).save(destination)
+        return True
+
     if cloud_config:
         try:
-            from poseguard.cloud.edge import CloudRelay, IncidentMonitor
+            from .cloud_network import MaixNetwork
         except ImportError:
-            from poseguard_cloud import CloudRelay, IncidentMonitor
-
-        def capture_person(box, destination):
-            if cloud_frame is None or not box:
-                return False
-            left, top, right, bottom = [int(value) for value in box]
-            left, top = max(0, left), max(0, top)
-            right, bottom = min(width, right), min(height, bottom)
-            if right <= left or bottom <= top:
-                return False
-            cloud_frame.crop(left, top, right-left, bottom-top).save(destination)
-            return True
+            from cloud_network import MaixNetwork
+        network = MaixNetwork()
 
         try:
             from poseguard.cloud.preview import PreviewPublisher
@@ -161,11 +173,16 @@ def run(*, max_frames=0, no_display=False, test_timers=False, cloud_config=None)
             factor=min(1.0,profile['long_side']/max(width,height))
             resized=frame.resize(max(16,int(width*factor)),max(16,int(height*factor))) if factor<1 else frame
             return bytes(resized.to_jpeg(quality=max(51,profile['quality'])).to_bytes()),resized.width(),resized.height(),width,height
-        cloud_relay = CloudRelay(cloud_config, health=lambda: dict(cloud_health))
-        preview = PreviewPublisher(cloud_relay.config,encode_preview,lambda f:f.copy()).start()
+        cloud_relay = CloudRelay(cloud_config, health=lambda: dict(cloud_health), transport=network.http_json)
+        preview_config={**cloud_relay.config,'is_test':benchmark or cloud_relay.config.get('is_test',False),
+                        'low_resource_preview':True,'keypoint_confidence_kind':'thresholded'}
+        preview = PreviewPublisher(preview_config,encode_preview,lambda f:f.copy(),connect=network.open_preview)
+        preview.failure_hook = network.preview_failed
         cloud_health['capabilities']=dict(preview=True,pose_overlay=True,camera_orientation=True)
-        cloud_relay.start()
-        cloud_monitor = IncidentMonitor(cloud_relay.directory, cloud_relay.config.get("rules"), snapshot=capture_person)
+    if not benchmark:
+        incident_dir = cloud_relay.directory if cloud_relay else Path(settings["event_path"]).parent / "cloud-data"
+        rules = cloud_relay.config.get("rules") if cloud_relay else None
+        cloud_monitor = IncidentMonitor(incident_dir, rules, snapshot=capture_person)
 
     try:
         # Probes may have different rotations. Output must match this input.
@@ -186,7 +203,7 @@ def run(*, max_frames=0, no_display=False, test_timers=False, cloud_config=None)
             flush=True,
         )
 
-        cam = camera.Camera(width, height, detector.input_format())
+        cam = camera.Camera(settings['capture_width'],settings['capture_height'],detector.input_format(),fps=settings['capture_fps'])
         if settings["display_enabled"] and not no_display:
             try:
                 disp = display.Display()
@@ -194,6 +211,12 @@ def run(*, max_frames=0, no_display=False, test_timers=False, cloud_config=None)
                 print("DISPLAY disabled: {}".format(exc), flush=True)
                 disp = None
 
+        # Reserve camera/NPU/display resources before starting TLS workers.
+        if cloud_relay is not None:cloud_relay.start()
+        if preview is not None:preview.start()
+
+        loop_started = time.monotonic()
+        next_metric = loop_started + 15
         while not app.need_exit() and (
             max_frames <= 0 or frame_count < max_frames
         ):
@@ -256,20 +279,19 @@ def run(*, max_frames=0, no_display=False, test_timers=False, cloud_config=None)
             alerts = len(
                 [item for item in decisions if item["state"] == "alert"]
             )
-            event_store.publish(
-                decisions,
-                timestamp=time.time(),
-                people=people,
-                metrics=latest_metrics,
-            )
+            if not benchmark:
+                event_store.publish(decisions,timestamp=time.time(),people=people,metrics=latest_metrics)
             if cloud_monitor is not None:
                 cloud_frame = frame
                 observed_ids = {track["track_id"] for track in tracks if not track.get("predicted", False)}
-                cloud_monitor.rules = {**cloud_monitor.rules, **cloud_relay.config.get("rules", {})}
+                if cloud_relay:
+                    cloud_monitor.rules = {**cloud_monitor.rules, **cloud_relay.config.get("rules", {})}
                 cloud_monitor.update([{"track_id": item["track_id"], "risk_kind": item["risk"],
                     "state": item["state"], "bbox": next((track["bbox"] for track in tracks if track["track_id"] == item["track_id"]), None),
                     "observed": item["track_id"] in observed_ids} for item in decisions], timestamp=timestamp)
-                cloud_health.update(mode="running", fps=latest_metrics["fps"], people=people, last_error=cloud_monitor.last_error)
+            cloud_health.update(mode="camera_benchmark"if benchmark else"running", fps=latest_metrics["fps"], people=people,
+                                last_error=(cloud_monitor.last_error if cloud_monitor else "") or
+                                (f"preview: {preview.last_error}" if preview and preview.last_error else ""))
 
             if preview:
                 preview.submit(frame,tracks,decisions,latest_metrics['fps'],frame_count,camera=camera_settings,
@@ -278,7 +300,12 @@ def run(*, max_frames=0, no_display=False, test_timers=False, cloud_config=None)
                 renderer.render(frame, tracks, decisions, latest_metrics)
                 disp.show(frame)
 
-            if frame_count % 30 == 0:
+            if frame_count==1 and on_ready is not None:
+                try:on_ready(dict(display_open=disp is not None,capture_width=width,capture_height=height,model_path=settings['model_path']))
+                except OSError as error:print('STATE_WARNING '+type(error).__name__,flush=True)
+
+            if timestamp >= next_metric:
+                next_metric = timestamp + 15
                 print(
                     "METRIC frames={} fps={:.2f} infer_ms={:.2f} people={} alerts={}".format(
                         frame_count,
@@ -327,6 +354,8 @@ def main(argv=None):
         no_display=args.no_display,
         test_timers=args.test_timers,
         cloud_config=args.cloud_config,
+        benchmark=args.benchmark,
+        data_directory=args.data_directory,
     )
 
 

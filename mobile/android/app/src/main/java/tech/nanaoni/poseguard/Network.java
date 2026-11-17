@@ -7,6 +7,9 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import android.os.SystemClock;
+import org.json.JSONObject;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -17,10 +20,31 @@ final class Network {
     static final String ORIGIN = "https://poseguard.nanaoni.tech";
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
     private static final OkHttpClient HTTP = new OkHttpClient.Builder()
+        .dns(CloudDns.INSTANCE).eventListenerFactory(call -> CloudDns.listener())
         .connectTimeout(8, TimeUnit.SECONDS).readTimeout(12, TimeUnit.SECONDS)
         .writeTimeout(12, TimeUnit.SECONDS).callTimeout(15, TimeUnit.SECONDS)
         .followRedirects(false).followSslRedirects(false)
         .retryOnConnectionFailure(false).build();
+    private static final OkHttpClient GET_HTTP = HTTP.newBuilder().retryOnConnectionFailure(true).build();
+    private static final AtomicBoolean ROUTE_REFRESH = new AtomicBoolean(false);
+    private static volatile long lastRouteRefresh = -60000;
+    static void refreshRoutes() {
+        if (CloudDns.INSTANCE.fresh() || SystemClock.elapsedRealtime() - lastRouteRefresh < 30000
+            || !ROUTE_REFRESH.compareAndSet(false, true)) return;
+        lastRouteRefresh = SystemClock.elapsedRealtime();
+        Thread thread = new Thread(() -> {
+            try {
+                Reply reply = request("/api/health", "GET", "", null);
+                if (reply.status == 200) {
+                    JSONObject value = new JSONObject(reply.body).optJSONObject("network");
+                    if (value != null) CloudDns.INSTANCE.install(value);
+                }
+            } catch (Exception ignored) {
+                // Keep system DNS available; later requests can refresh.
+            } finally { ROUTE_REFRESH.set(false); }
+        }, "poseguard-routes");
+        thread.setDaemon(true); thread.start();
+    }
     static final class Reply {
         final int status;
         final String body;
@@ -42,7 +66,7 @@ final class Network {
         if (!method.matches("GET|POST|PUT|PATCH|DELETE") || body.length() > 420000)
             throw new IllegalArgumentException("Invalid request");
         Request.Builder request = new Request.Builder().url(ORIGIN + route)
-            .header("User-Agent", "PoseGuard-Android/1.5.0")
+            .header("User-Agent", "PoseGuard-Android/1.6.0")
             .header("Accept", "application/json").header("Origin", ORIGIN);
         if (receiverToken != null) request.header("Authorization", "Bearer " + receiverToken);
         else {
@@ -50,7 +74,7 @@ final class Network {
             if (cookie != null) request.header("Cookie", cookie);
         }
         request.method(method, "GET".equals(method) ? null : RequestBody.create(body, JSON));
-        try (Response response = HTTP.newCall(request.build()).execute()) {
+        try (Response response = ("GET".equals(method) ? GET_HTTP : HTTP).newCall(request.build()).execute()) {
             if (receiverToken == null) {
                 for (String cookie : response.headers("Set-Cookie"))
                     CookieManager.getInstance().setCookie(ORIGIN, cookie);

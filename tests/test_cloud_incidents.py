@@ -1,5 +1,5 @@
 import json
-from poseguard.cloud.edge import IncidentMonitor
+from poseguard.cloud.edge import IncidentMonitor,CloudRelay
 
 
 def observation(track=1, risk="phone_to_ear", state="candidate", observed=True):
@@ -61,3 +61,25 @@ def test_snapshot_is_cropped_callback_and_persisted_at_threshold(tmp_path):
     queued=json.loads(next((tmp_path/'outbox').glob('*.json')).read_text(encoding='utf-8'))
     assert queued['snapshot']['data_base64'] and len(calls)==2
     assert len(list((tmp_path/'evidence').rglob('*.jpg')))==2
+
+
+def test_raised_policy_keeps_old_evidence_without_blocking_new_alerts(tmp_path):
+    config=tmp_path/'device.json'
+    config.write_text(json.dumps(dict(server_url='https://alerts.example.test',device_token='test',data_directory=str(tmp_path/'data'),rules=dict(frame_threshold=300))))
+    relay=CloudRelay(config)
+    for index in range(20):
+        (relay.directory/'outbox'/f'a{index:02}.json').write_text(json.dumps(dict(observed_frames=101,event_id=str(index))))
+    newest=relay.directory/'outbox'/'z.json';newest.write_text(json.dumps(dict(observed_frames=301,event_id='new')))
+    selected=list(relay.pending_payloads())
+    assert len(selected)==1 and selected[0][0]==newest
+    assert len(list((relay.directory/'outbox').glob('*.json')))==21
+    relay.config['rules']['frame_threshold']=100
+    assert len(list(relay.pending_payloads()))==12
+
+
+def test_malformed_outbox_is_retained_in_quarantine_while_valid_data_continues(tmp_path):
+    config=tmp_path/'device.json';config.write_text(json.dumps(dict(server_url='https://alerts.example.test',device_token='test',data_directory=str(tmp_path/'data'))))
+    relay=CloudRelay(config);bad=relay.directory/'outbox'/'a.json';bad.write_text('{invalid')
+    good=relay.directory/'outbox'/'b.json';good.write_text(json.dumps(dict(observed_frames=101)))
+    assert [p for p,_ in relay.pending_payloads()]==[good]
+    assert (relay.directory/'rejected'/'a.json').read_text()=='{invalid'

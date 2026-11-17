@@ -1,9 +1,11 @@
+#include "PGUsbConsole.h"
 #if defined(POSEGUARD_CAMERA_XIAO)
 #include <ArduinoWebsockets.h>
 #endif
 #include <Preferences.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
+#include <esp_system.h>
 
 #include <atomic>
 
@@ -34,19 +36,20 @@ void networkTask(void*) {
 }
 
 void printStatus() {
+  Serial.printf("reset_reason=%d\n",int(esp_reset_reason()));
   const auto status = WiFi.status();
   wifi_ap_record_t accessPoint{};
   const bool associated = esp_wifi_sta_get_ap_info(&accessPoint) == ESP_OK;
   Serial.printf(
       "WiFi=%d storage=%d bound=%d status=%d disconnect=%d clock_synced=%d "
       "ip=%s cloud_http=%d heartbeat_age_s=%lu associated=%d recoveries=%u "
-      "tx_qdbm=%d key_length=%u temperature_c=%.1f\n",
+      "tx_qdbm=%d key_length=%u temperature_c=%.1f rssi=%d\n",
       status == WL_CONNECTED, ready, cloud.bound(), status,
       disconnectReason.load(), time(nullptr) >= 1704067200,
       WiFi.localIP().toString().c_str(), cloud.lastHttpStatus(),
       static_cast<unsigned long>(cloud.lastHeartbeatAgeSeconds()), associated,
       networkRecoveries, WiFi.getTxPower(), configuredPassword.length(),
-      temperatureRead());
+      temperatureRead(), associated ? int(accessPoint.rssi) : 0);
 }
 
 void scanConfiguredNetwork() {
@@ -54,7 +57,7 @@ void scanConfiguredNetwork() {
   for (int i = 0; i < count; ++i) {
     if (WiFi.SSID(i) == configuredSsid) {
       Serial.printf("configured_network channel=%d rssi=%d security=%d\n",
-                    WiFi.channel(i), WiFi.RSSI(i), WiFi.encryptionType(i));
+                    int(WiFi.channel(i)), int(WiFi.RSSI(i)), int(WiFi.encryptionType(i)));
     }
   }
   Serial.printf("scan_complete count=%d\n", count);
@@ -194,6 +197,10 @@ void configurePower(const String& level) {
 }  // namespace
 
 void setup() {
+#if defined(POSEGUARD_S3_MODEL)
+  Serial.setRxBufferSize(8192);
+  Serial.setTxBufferSize(4096);
+#endif
   Serial.begin(115200);
   Serial.setTimeout(1000);
   WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
@@ -234,7 +241,7 @@ void setup() {
   if (ready) cameraPreview.begin(cloud, POSEGUARD_ROOT_CA);
 #endif
   Serial.println(
-      "PoseGuard ESP32-S3 1.3.0 "
+      "PoseGuard ESP32-S3 1.6.0 "
       "已启动。可用命令：WIFI、TXPOWER、BIND、STATUS、SCAN、INIT_STORAGE");
 }
 
@@ -244,6 +251,9 @@ void loop() {
   if (Serial.available()) {
     String line = Serial.readStringUntil('\n');
     if (line.endsWith("\r")) line.remove(line.length() - 1);
+#if defined(POSEGUARD_S3_MODEL)
+    if (cameraPreview.command(line)) return;
+#endif
     if (line.startsWith("WIFI ")) {
       configureNetwork(line);
     } else if (line.startsWith("WIFI_AP ")) {
@@ -256,6 +266,9 @@ void loop() {
                          : "绑定失败，请检查联网、NTP 时间和一次性绑定码");
     } else if (line == "STATUS") {
       printStatus();
+#if defined(POSEGUARD_S3_MODEL)
+      cameraPreview.printStatus();
+#endif
     } else if (line == "SCAN") {
       scanConfiguredNetwork();
     } else if (line == "INIT_STORAGE" && !ready && LittleFS.format()) {

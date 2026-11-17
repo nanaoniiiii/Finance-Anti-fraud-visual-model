@@ -20,6 +20,8 @@ final class PreviewSocket {
     }
     private final Events events;
     private final OkHttpClient client = new OkHttpClient.Builder()
+                                            .dns(CloudDns.INSTANCE)
+                                            .eventListenerFactory(call -> CloudDns.listener())
                                             .connectTimeout(12, TimeUnit.SECONDS)
                                             .readTimeout(12, TimeUnit.SECONDS)
                                             .pingInterval(20, TimeUnit.SECONDS)
@@ -38,14 +40,17 @@ final class PreviewSocket {
             return;
         close(null, "replaced");
         current = id;
+        CloudDns.Trace trace = new CloudDns.Trace();
         Request.Builder request = new Request.Builder()
+                                      .tag(CloudDns.Trace.class, trace)
                                       .url("wss://poseguard.nanaoni.tech" + path)
                                       .header("Origin", Network.ORIGIN)
-                                      .header("User-Agent", "PoseGuard-Android/1.3.0");
+                                      .header("User-Agent", "PoseGuard-Android/1.6.0");
         String cookie = CookieManager.getInstance().getCookie(Network.ORIGIN);
         if (cookie != null)
             request.header("Cookie", cookie);
         socket = client.newWebSocket(request.build(), new WebSocketListener() {
+            private long frames;
             private boolean active() {
                 synchronized (PreviewSocket.this) {
                     return id.equals(current);
@@ -70,6 +75,7 @@ final class PreviewSocket {
             }
             @Override
             public void onMessage(WebSocket ws, ByteString bytes) {
+                if (++frames == 1) Log.i("PoseGuardPreview", "first_frame_bytes=" + bytes.size());
                 if (bytes.size() > 614400) {
                     ws.close(1009, "Frame too large");
                     return;
@@ -90,6 +96,7 @@ final class PreviewSocket {
             }
             @Override
             public void onFailure(WebSocket ws, Throwable error, Response response) {
+                CloudDns.INSTANCE.failed(trace.peer);
                 Log.i("PoseGuardPreview", "failed=" + error.getClass().getSimpleName()
                     + " http=" + (response == null ? 0 : response.code()));
                 if (active()) {
@@ -97,7 +104,8 @@ final class PreviewSocket {
                         ? "登录已过期，请重新进入工作台"
                         : "预览连接中断，可点击请求预览重试";
                     events.emit(id, "error", message);
-                    events.emit(id, "closed", closeJSON(1006, "network_error"));
+                    boolean expired = response != null && (response.code() == 401 || response.code() == 403);
+                    events.emit(id, "closed", closeJSON(expired ? 1008 : 1006, expired ? "login_expired" : "network_error"));
                 }
             }
         });

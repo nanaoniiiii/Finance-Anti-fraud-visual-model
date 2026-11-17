@@ -1,3 +1,2 @@
-platforms/rk3566/service/* text eol=lf
-platforms/rk3566/*.sh text eol=lf
-*.bat -text whitespace=cr-at-eol
+*.sh text eol=lf
+*.pem text eol=lf

@@ -97,6 +97,10 @@ def open_capture(source, camera_config):
     if not capture.isOpened():
         capture.release()
         raise RuntimeError(f"Cannot open video source: {source}")
+    if isinstance(source,str) and hasattr(cv2,'CAP_PROP_ORIENTATION_AUTO'):
+        # FFmpeg builds differ in their default for video display matrices.
+        # Apply file metadata before installation-direction inference/resizing.
+        capture.set(cv2.CAP_PROP_ORIENTATION_AUTO,1)
     if isinstance(source, int):
         capture.set(cv2.CAP_PROP_BUFFERSIZE, int(camera_config["buffer_size"]))
         capture.set(cv2.CAP_PROP_FRAME_WIDTH, int(camera_config["width"]))
@@ -127,6 +131,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--max-frames", type=int, default=None)
     parser.add_argument("--cloud-config", default=None, help="bound device configuration; enables local evidence and cloud relay")
+    parser.add_argument("--local-only", action="store_true", help="record candidates and screenshots locally without external uploads")
+    parser.add_argument("--trace-file", default=None, help="append actual per-frame tracks and risk observations as JSONL")
+    parser.add_argument("--stop-file", default=None, help="stop cleanly when this local control file exists")
     parser.add_argument("--camera-rotation", choices=['auto','0','90','180','270'], default='auto')
     parser.add_argument("--camera-mirror", action='store_true')
     return parser
@@ -179,7 +186,8 @@ def run(args: argparse.Namespace) -> int:
     preview = None
     orientation = CameraOrientation(getattr(args,'camera_rotation','auto'),getattr(args,'camera_mirror',False))
     previous_direction = None
-    if getattr(args, "cloud_config", None):
+    display_shape = None
+    if getattr(args, "cloud_config", None) or getattr(args,"local_only",False):
         from poseguard.cloud.edge import CloudRelay, IncidentMonitor
 
         def capture_person(box, destination):
@@ -206,19 +214,30 @@ def run(args: argparse.Namespace) -> int:
             ok, jpeg = cv2.imencode('.jpg',image,[cv2.IMWRITE_JPEG_QUALITY,profile['quality']])
             if not ok: raise RuntimeError('Preview JPEG encoding failed')
             return jpeg.tobytes(), image.shape[1], image.shape[0], original_width, original_height
-        cloud_relay = CloudRelay(args.cloud_config, health=lambda: dict(cloud_health))
-        preview = PreviewPublisher(cloud_relay.config,encode_preview,lambda f:f.copy()).start()
-        cloud_health['capabilities'] = dict(preview=True,pose_overlay=True,camera_orientation=True)
-        cloud_relay.start()
-        cloud_monitor = IncidentMonitor(cloud_relay.directory, cloud_relay.config.get("rules"), snapshot=capture_person)
+        if getattr(args,"cloud_config",None) and not getattr(args,"local_only",False):
+            cloud_relay = CloudRelay(args.cloud_config, health=lambda: dict(cloud_health))
+            preview = PreviewPublisher(cloud_relay.config,encode_preview,lambda f:f.copy()).start()
+            cloud_health['capabilities'] = dict(preview=True,pose_overlay=True,camera_orientation=True)
+            cloud_relay.start()
+            cloud_monitor = IncidentMonitor(cloud_relay.directory, cloud_relay.config.get("rules"), snapshot=capture_person)
+        else:
+            cloud_monitor=IncidentMonitor(output_dir/'local-records',snapshot=capture_person)
 
     try:
         capture = open_capture(source, config["camera"])
         video_rate = capture.get(cv2.CAP_PROP_FPS) if isinstance(source, str) else 0.0
         video_epoch = time.monotonic()
         while True:
+            if getattr(args,"stop_file",None) and Path(args.stop_file).exists():
+                break
             if paused and config["display"]["enabled"]:
                 key = cv2.waitKey(30) & 0xFF
+                try:
+                    window_visible = cv2.getWindowProperty(title, cv2.WND_PROP_VISIBLE) >= 1
+                except cv2.error:
+                    window_visible = False
+                if not window_visible:
+                    break
                 if is_exit_key(key):
                     break
                 if key in (ord("p"), ord("P")):
@@ -279,7 +298,8 @@ def run(args: argparse.Namespace) -> int:
             processed_frames += 1
             if cloud_monitor is not None:
                 cloud_frame = frame
-                cloud_monitor.rules = {**cloud_monitor.rules, **cloud_relay.config.get("rules", {})}
+                if cloud_relay is not None:
+                    cloud_monitor.rules = {**cloud_monitor.rules, **cloud_relay.config.get("rules", {})}
                 observed_ids = {track.track_id for track in tracks if track.confirmed and not track.predicted}
                 cloud_monitor.update([{"track_id": d.track_id, "risk_kind": d.kind.value,
                     "state": d.state.value, "bbox": d.bbox, "observed": d.track_id in observed_ids}
@@ -294,6 +314,9 @@ def run(args: argparse.Namespace) -> int:
                 for decision in new_events:
                     logger.write(decision, timestamp=time.time())
             recent_events = update_recent_events(recent_events, new_events)
+            if getattr(args,"trace_file",None):
+                from poseguard.cloud.edge import append_record
+                append_record(args.trace_file,{"frame":processed_frames,"source_timestamp":timestamp-video_epoch if video_rate else timestamp,"orientation":orientation.rotation,"inference_ms":inference_ms,"people":sum(not track.predicted for track in tracks),"tracks":[{"id":track.track_id,"predicted":track.predicted,"confirmed":track.confirmed,"bbox":list(track.bbox)}for track in tracks],"risks":[{"id":decision.track_id,"kind":decision.kind.value,"state":decision.state.value,"duration_s":decision.duration_seconds}for decision in decisions]})
 
             now = time.perf_counter()
             instantaneous_fps = 1.0 / max(now - previous_frame_time, 1e-6)
@@ -311,9 +334,28 @@ def run(args: argparse.Namespace) -> int:
                     {"fps": fps, "inference_ms": inference_ms},
                     recent_events=tuple(text for _, text in recent_events),
                 )
-                cv2.imshow("PoseGuard - Suspicious Behavior Assistance", canvas)
+                title="PoseGuard - Suspicious Behavior Assistance"
+                if display_shape!=canvas.shape[:2]:
+                    width,height=1280,800
+                    if sys.platform.startswith('win'):
+                        import ctypes
+                        width=ctypes.windll.user32.GetSystemMetrics(0)
+                        height=ctypes.windll.user32.GetSystemMetrics(1)
+                    ratio=min(1,(width-100)/canvas.shape[1],(height-120)/canvas.shape[0])
+                    cw,ch=max(160,int(canvas.shape[1]*ratio)),max(160,int(canvas.shape[0]*ratio))
+                    cv2.namedWindow(title,cv2.WINDOW_NORMAL|cv2.WINDOW_KEEPRATIO)
+                    cv2.resizeWindow(title,cw,ch)
+                    cv2.moveWindow(title,max(0,(width-cw)//2),max(0,(height-ch-50)//2))
+                    display_shape=canvas.shape[:2]
+                cv2.imshow(title, canvas)
                 key = cv2.waitKey(1) & 0xFF
                 if is_exit_key(key):
+                    break
+                try:
+                    window_visible = cv2.getWindowProperty(title, cv2.WND_PROP_VISIBLE) >= 1
+                except cv2.error:
+                    window_visible = False
+                if not window_visible:
                     break
                 if key in (ord("p"), ord("P")):
                     paused = True
@@ -334,7 +376,8 @@ def run(args: argparse.Namespace) -> int:
             capture.release()
         if logger is not None:
             logger.close()
-        cv2.destroyAllWindows()
+        if config["display"]["enabled"]:
+            cv2.destroyAllWindows()
 
 
 def main() -> int:

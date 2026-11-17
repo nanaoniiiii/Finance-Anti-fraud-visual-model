@@ -55,7 +55,7 @@ class YoloPhoneBackend:
         phone_class: int = 67,
         device: str | None = None,
     ) -> None:
-        self.model_path = model_path
+        self.model_path = str(model_path)
         self.enabled = enabled
         self.confidence = confidence
         self.phone_class = phone_class
@@ -68,6 +68,10 @@ class YoloPhoneBackend:
 
     def _get_model(self):
         if self._model is None:
+            if self.model_path.lower().endswith('.onnx'):
+                from poseguard.backends.onnx_yolo import OnnxPhoneBackend
+                self._model=OnnxPhoneBackend(self.model_path,self.confidence,self.phone_class)
+                return self._model
             try:
                 from ultralytics import YOLO
             except ImportError as exc:
@@ -87,6 +91,8 @@ class YoloPhoneBackend:
     ) -> tuple[PhoneObservation, ...]:
         if not self.enabled or not regions:
             return ()
+        if self.model_path.lower().endswith('.onnx'):
+            return self._get_model().find(frame,regions)
         height, width = frame.shape[:2]
         x1 = max(int(min(region[0] for region in regions)), 0)
         y1 = max(int(min(region[1] for region in regions)), 0)

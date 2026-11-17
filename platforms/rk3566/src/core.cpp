@@ -163,8 +163,10 @@ std::vector<TrackState> PoseCore::update_tracks(
   const auto filtered = filter_and_deduplicate(observations);
 
   for (auto& slot : tracks_) {
-    if (slot && timestamp - slot->last_seen_seconds >
-                    config_.missing_track_seconds) {
+    const double lifetime = slot && !slot->confirmed && config_.unconfirmed_missing_seconds>0
+        ? std::min(config_.missing_track_seconds,config_.unconfirmed_missing_seconds)
+        : config_.missing_track_seconds;
+    if (slot && timestamp - slot->last_seen_seconds > lifetime) {
       slot.reset();
     }
   }

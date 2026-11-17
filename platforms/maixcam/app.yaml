@@ -1,0 +1,11 @@
+id: poseguard
+name: PoseGuard
+name[zh]: PoseGuard 反诈检测
+version: 1.6.0
+author: nanaoniiiii
+icon: /maixapp/share/icon/icon.json
+desc: Local pose detection and cloud device management.
+desc[zh]: 本地姿态检测、事件记录与云端设备管理。
+files:
+  - main.py
+  - app.yaml

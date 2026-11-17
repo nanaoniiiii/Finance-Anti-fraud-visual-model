@@ -76,3 +76,11 @@ def test_preview_normalizes_pose_against_detection_image():
     m=json.loads(packet[8:8+size]); payload=packet[8+size:]
     assert packet[:4] == b'PGV1' and m['tracks'][0]['keypoints'][0] == [.5,.12,.9]
     assert cv2.imdecode(np.frombuffer(payload,dtype=np.uint8),cv2.IMREAD_COLOR).shape == image.shape
+
+
+def test_preview_does_not_attach_held_risks_to_a_predicted_only_person():
+    frame=np.zeros((100,100,3),dtype=np.uint8);ok,jpeg=cv2.imencode('.jpg',frame);assert ok
+    track=dict(track_id=3,bbox=(0,0,100,100),keypoints=[(50,50,.9)]*17,confirmed=True,predicted=True)
+    packet=PreviewPublisher.packet(jpeg.tobytes(),100,100,[track],[dict(track_id=3,risk='phone_to_ear',state='alert')],{})
+    size=struct.unpack_from('>I',packet,4)[0];meta=json.loads(packet[8:8+size])
+    assert meta['people']==0 and meta['risks']==[]

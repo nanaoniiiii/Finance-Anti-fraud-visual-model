@@ -8,6 +8,7 @@ import NotificationPolicy from './NotificationPolicy.jsx';
 import DispositionForm from './DispositionForm.jsx';
 import { choosePendingAlert, popupKey, postponePendingAlerts } from './popup-state.js';
 import {coalesceReads} from './request-coalescer.js';
+import {needsHistory} from './history-refresh.js';
 import {
   Activity,
   ArrowDownToLine,
@@ -66,6 +67,7 @@ const stateName = {
 };
 const platformName = {
   windows: 'Windows',
+  linux: 'Linux',
   rk3566: 'RK3566',
   maixcam: 'MaixCAM',
   esp32s3: 'ESP32-S3',
@@ -438,6 +440,9 @@ function App() {
   const [error, setError] = useState('');
   const cursor = useRef(0);
   const reloadVersion = useRef(0);
+  const historySnapshot = useRef(null);
+  const fullReloadActive = useRef(0);
+  const fullReloadQueued = useRef(false);
   const seen = useRef(new Set());
   const socket = useRef(null);
   const alertAudio = useRef(null);
@@ -445,7 +450,7 @@ function App() {
   const lastAuthenticatedId = useRef(null);
   useEffect(()=>{
     if(lastAuthenticatedId.current&&lastAuthenticatedId.current!==user?.id){
-      api.clear();reloadVersion.current++;setUrgent(null);setTestNotice(null);setPendingAlerts([]);setSelectedMessage(null);setMessageWindowOpen(false);setPersonalSummary({unread:0,version:0});seen.current.clear();cursor.current=0;
+      api.clear();reloadVersion.current++;historySnapshot.current=null;fullReloadActive.current=0;fullReloadQueued.current=false;setUrgent(null);setTestNotice(null);setPendingAlerts([]);setSelectedMessage(null);setMessageWindowOpen(false);setPersonalSummary({unread:0,version:0});seen.current.clear();cursor.current=0;
       window.PoseGuardNative?.disableNotifications?.();
     }
     lastAuthenticatedId.current=user?.id||null;
@@ -483,24 +488,44 @@ function App() {
       setLoading(false);
     }
   }
-  async function reload(savedSettings) {
+  async function reload(savedSettings, options={}) {
+    const hasSavedSettings=!!(savedSettings?.rules&&savedSettings?.mail);
+    if(hasSavedSettings)setSettings(savedSettings);
+    if(fullReloadActive.current) {
+      if(options.passive)return;
+      if(!hasSavedSettings){fullReloadQueued.current=true;return;}
+    }
+    const snapshotCursor=cursor.current;
+    const withHistory=needsHistory(historySnapshot.current,snapshotCursor,options);
     const version = ++reloadVersion.current;
-    if (savedSettings?.rules && savedSettings?.mail) setSettings(savedSettings);
+    if(withHistory)fullReloadActive.current=version;
     try {
       const reads=[
         ['/devices',fleet=>{setDevices(fleet.devices);setReceivers(fleet.receivers);}],
-        ['/events',feed=>{setEvents(previous=>eventsExpanded.current?[...new Map([...previous,...feed.events].map(event=>[event.id,event])).values()].sort((a,b)=>b.updated_at.localeCompare(a.updated_at)):feed.events);if(!eventsExpanded.current)setEventsBefore(feed.next_before||null);}],
-        ['/stats',setStats],['/settings',setSettings],['/personal-messages/summary',setPersonalSummary],
-        ['/pending-alerts',pending=>{setPendingAlerts(pending.alerts);setUrgent(previous=>choosePendingAlert(previous,pending.alerts,popupSnoozes.current,handlingEvent.current));}],
+        ['/stats',setStats],
       ];
+      if(withHistory)reads.push(
+        ['/events',feed=>{setEvents(previous=>eventsExpanded.current?[...new Map([...previous,...feed.events].map(event=>[event.id,event])).values()].sort((a,b)=>b.updated_at.localeCompare(a.updated_at)):feed.events);if(!eventsExpanded.current)setEventsBefore(feed.next_before||null);}],
+        ['/settings',setSettings],['/personal-messages/summary',setPersonalSummary],
+        ['/pending-alerts',pending=>{setPendingAlerts(pending.alerts);setUrgent(previous=>choosePendingAlert(previous,pending.alerts,popupSnoozes.current,handlingEvent.current));}],
+      );
       const results=await Promise.allSettled(reads.map(([path,apply])=>api(path).then(value=>{if(version===reloadVersion.current)apply(value);}).catch(error=>{if(version===reloadVersion.current&&error.status===401)setUser(null);throw error;})));
       if(version!==reloadVersion.current)return;
       const failed=results.find(result=>result.status==='rejected');
-      setError(failed?'部分信息暂未同步：'+failed.reason.message:'');
+      if(withHistory&&!failed)historySnapshot.current={cursor:snapshotCursor,loadedAt:Date.now()};
+      if(withHistory||failed)setError(failed?'部分信息暂未同步：'+failed.reason.message:'');
     } catch (e) {
       if (version !== reloadVersion.current) return;
       if (e.status === 401) setUser(null);
       else setError(e.message);
+    } finally {
+      if(fullReloadActive.current===version) {
+        fullReloadActive.current=0;
+        if(fullReloadQueued.current) {
+          fullReloadQueued.current=false;
+          queueMicrotask(()=>reload());
+        }
+      }
     }
   }
   function changeEvent(change) {
@@ -595,7 +620,7 @@ function App() {
       if (socket.current?.readyState === 1) socket.current.send('ping');
       poll();
     }, 6000);
-    const refresh = setInterval(reload, 20000);
+    const refresh = setInterval(()=>reload(undefined,{passive:true}), 20000);
     return () => {
       stopped = true;
       clearTimeout(retry);
@@ -1106,7 +1131,7 @@ function App() {
                   监测终端 <span>{active.length}</span>
                 </h2>
                 <div className="platform-pills">
-                  {['windows', 'rk3566', 'maixcam', 'esp32s3'].map((p) => (
+                  {['windows', 'linux', 'rk3566', 'maixcam', 'esp32s3'].map((p) => (
                     <span key={p}>
                       <PlatformIcon platform={p} size={14} />
                       {platformName[p]}
@@ -2125,7 +2150,7 @@ function BindModal({ onClose, notify }) {
                 value={platform}
                 onChange={(e) => setPlatform(e.target.value)}
               >
-                {['windows', 'rk3566', 'maixcam', 'esp32s3'].map((p) => (
+                {['windows', 'linux', 'rk3566', 'maixcam', 'esp32s3'].map((p) => (
                   <option key={p} value={p}>
                     {platformName[p]}
                   </option>

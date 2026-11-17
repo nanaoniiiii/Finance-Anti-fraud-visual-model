@@ -54,6 +54,7 @@ test(
       platform: 'windows',
     });
     assert.equal(enrolled.status, 201, JSON.stringify(enrolled.data));
+    assert.equal(enrolled.data.is_test, true);
     const device = enrolled.data.device_token;
     assert.ok(device.startsWith('pgd_'));
     for (const address of ['198.51.100.8', '203.0.113.21']) {

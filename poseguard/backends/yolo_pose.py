@@ -69,7 +69,7 @@ class YoloPoseBackend:
         keypoint_confidence: float = 0.25,
         device: str | None = None,
     ) -> None:
-        self.model_path = model_path
+        self.model_path = str(model_path)
         self.confidence = confidence
         self.keypoint_confidence = keypoint_confidence
         self.device = device
@@ -81,6 +81,10 @@ class YoloPoseBackend:
 
     def _get_model(self):
         if self._model is None:
+            if self.model_path.lower().endswith('.onnx'):
+                from poseguard.backends.onnx_yolo import OnnxPoseBackend
+                self._model=OnnxPoseBackend(self.model_path,self.confidence,self.keypoint_confidence)
+                return self._model
             try:
                 from ultralytics import YOLO
             except ImportError as exc:
@@ -94,6 +98,8 @@ class YoloPoseBackend:
         return self._model
 
     def infer(self, frame: Any) -> tuple[PersonObservation, ...]:
+        if self.model_path.lower().endswith('.onnx'):
+            return self._get_model().infer(frame)
         kwargs = {"source": frame, "conf": self.confidence, "verbose": False}
         if self.device:
             kwargs["device"] = self.device

@@ -1,3 +1,3 @@
 """Local-first human risk pose monitoring."""
 
-__version__ = "0.1.0"
+__version__ = "1.6.0"

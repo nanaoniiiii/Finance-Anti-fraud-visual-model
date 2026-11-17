@@ -1,4 +1,4 @@
-const CACHE = 'poseguard-shell-v1.5.0';
+const CACHE = 'poseguard-shell-v1.6.0-r7';
 function validAsset(response, url) {
   const type = response?.headers.get('Content-Type') || '';
   if (!response?.ok || type.includes('text/html')) return false;

@@ -1,6 +1,8 @@
 # PoseGuard 多端金融反诈视觉辅助预警
 
-[云端管理台](https://poseguard.nanaoni.tech) 同时管理 Windows、RK3566、MaixCAM 和 ESP32-S3 接入端。安卓 App 和 iPhone 主屏幕网页可接收绑定设备的告警。默认累计同一人员、同一风险的候选及确认状态，第 101 帧上报。绑定、通知与部署见[多端云预警使用指南](docs/CLOUD.zh-CN.md)。
+[云端管理台](https://poseguard.nanaoni.tech) 同时管理 Windows、Linux、RK3566、MaixCAM 和 ESP32-S3 接入端。安卓 App 和 iPhone 主屏幕网页可接收绑定设备的告警。初始规则累计同一人员、同一风险的候选及确认状态，第 101 帧上报；管理员可在系统设置中调整阈值。绑定、通知与部署见[多端云预警使用指南](docs/CLOUD.zh-CN.md)。
+
+**1.6.0** 提供 Windows EXE、Linux 一键安装与 systemd 自启动包、MaixCAM 设备端安装包，以及在 XIAO ESP32-S3 Sense 芯片上运行的 YOLO11n-Pose INT8 固件。MaixCAM 已验证 USB 部署、板载 NPU 推理、屏幕显示和开机运行。ESP32 正式默认使用 192×192 网络输入，128×128 实验模型的实测数据和通用场景误报对比见验证报告。网页和安卓 App 的原始画面与姿态画面都可按需请求。[Windows/Linux](docs/PORTABLE.zh-CN.md) · [MaixCAM](docs/MAIXCAM.zh-CN.md) · [ESP32-S3](docs/ESP32S3.zh-CN.md) · [模型对比](docs/esp32s3-model-benchmarks.json)。
 
 **1.3.1** 将邮件通知改为通用 SMTP 接入：独立配置服务器、端口、TLS/STARTTLS及认证方式，支持独立登录名和密码/授权码；网页与Android App同步更新。见[验证记录](docs/smtp-validation-2026-11-15.md)和[1.3.1更新包](https://github.com/nanaoniiiii/Finance-Anti-fraud-visual-model/releases/tag/poseguard-v1.3.1)。
 
@@ -10,7 +12,7 @@
 
 **1.3.0** 增加网页/App 按需实时预览、右上检测状态、骨架与FPS切换，以及检测前自动/0°/90°/180°/270°安装方向校正。使用方法见[预览与方向说明](docs/PREVIEW.zh-CN.md)，实测范围见[验证记录](docs/preview-validation-2026-11-15.md)，安装包见[1.3.0 发布](https://github.com/nanaoniiiii/Finance-Anti-fraud-visual-model/releases/tag/poseguard-v1.3.0)。
 
-XIAO ESP32-S3 Sense 使用1.3.0相机预览包；通用ESP32-S3纯接入网络固件保留 [1.2.2 发布](https://github.com/nanaoniiiii/Finance-Anti-fraud-visual-model/releases/tag/esp32s3-v1.2.2)。设备使用 DHCP、域名和设备密钥上报，IP 变化后保留原绑定。
+XIAO ESP32-S3 Sense 使用 1.6.0 本地模型固件；通用 ESP32-S3 纯接入网络固件保留 [1.2.2 发布](https://github.com/nanaoniiiii/Finance-Anti-fraud-visual-model/releases/tag/esp32s3-v1.2.2)。设备使用 DHCP、域名和设备密钥上报，IP 变化后保留原绑定。
 
 PoseGuard 是一个本地运行的多人姿态跟踪与疑似风险行为辅助预警程序，可自主运行于弱网或离线环境，在端侧完成视觉处理与风险预警，无需另行部署本地服务器或云端服务器进行处理，从而减轻既有场所的改造、升级和调试成本。
 
@@ -25,6 +27,8 @@ PoseGuard 是一个本地运行的多人姿态跟踪与疑似风险行为辅助�
 红色框只表示当前行为需要人工关注，不代表身份、违法事实或诈骗结论。PoseGuard 是辅助预警工具，最终判断应由现场人员结合实际情况作出。
 
 ## 普通用户快速开始（Windows）
+
+推荐从 [Releases](https://github.com/nanaoniiiii/Finance-Anti-fraud-visual-model/releases) 下载 `PoseGuard-Windows-v1.6.0.zip`，解压后双击 `PoseGuard.exe`，无需安装 Python。绑定及更新方法见[便携运行包说明](docs/PORTABLE.zh-CN.md)。以下步骤保留给需要修改源码的用户。
 
 ### 运行条件
 
@@ -88,7 +92,7 @@ Pop-Location
 
 ## 完整端侧处理闭环
 
-具备本地模型的 Windows、RK3566 和 MaixCAM 运行时可在设备本机完成以下处理。ESP32-S3 当前发布的是检测结果与通知接入适配器，摄像头模型需另行集成：
+Windows、Linux、RK3566、MaixCAM 和 XIAO ESP32-S3 Sense 可以在设备本机完成以下处理：
 
 ```text
 摄像头采集 -> 姿态/目标推理 -> 统一人体观测 -> 多人轨迹 -> 时序风险判断 -> 本地显示与事件告警
@@ -151,7 +155,7 @@ PoseGuard 不通过开发板型号白名单划分版本，而是根据操作系�
 
 适用于 ESP32-S3 等没有 TOPS 级 NPU、内存和闪存明显受限的微控制器环境。此类设备不直接照搬完整 YOLO11n-Pose，而是根据风险行为所需的人体部位重新设计轻量模型。
 
-MCU 专用模型仍需针对相应硬件训练与实测，可采用以下优化；当前 ESP32-S3 发布包只提供接入适配器：
+XIAO ESP32-S3 Sense 发布包提供板端量化模型与测量工具。针对 MCU 的模型优化包括：
 
 - 使用低分辨率 RGB 或灰度输入，控制摄像头帧缓存和推理工作区；
 - 只保留耳、腕、肩、髋、脚等风险规则需要的关键点；
@@ -168,10 +172,10 @@ MCU 专用模型仍需针对相应硬件训练与实测，可采用以下优化�
 | 已测设备 | 运行环境分类 | 摄像头链路 | 推理形式 | 主要专项优化 | 部署验证说明 |
 | --- | --- | --- | --- | --- | --- |
 | 家用计算机 | 通用计算平台 | 内置或 USB 摄像头、视频文件 | YOLO11n-Pose 与条件式手机模型，CPU/CUDA | 完整 17 点、稳定 ID、尺度归一化、完整界面与事件输出 | 已完成 Windows 摄像头、本地视频和连续推理测试 |
-| MaixCAM | 边缘 AI SoC | 板载 MIPI 摄像头 | 320×224 INT8 板端姿态模型 | MaixPy 轻量实现、有限轨迹历史、板载屏幕和本地事件 | 已完成板载摄像头到姿态、风险判断和屏幕告警闭环测试 |
+| MaixCAM | 边缘 AI SoC | 板载 MIPI 摄像头 | 320×224 INT8 板端姿态模型 | MaixPy、板载屏幕、持久告警队列 | 320×240 实时采集、开机运行、原视频和四方向实测 |
 | 泰山派 RK3566 | 边缘 AI SoC | USB UVC 摄像头或本地 H.264 视频 | 320×320 INT8 RKNN | 四路量化、C++17、MPP/GStreamer、UVC 重扫、MJPEG 共享编码 | 已实测本地视频、UVC 实拍及接口重连、MIPI 显示、开机服务和路由器直连云端 |
 | K230 设备 | 边缘 AI SoC | 板载摄像头或设备支持的视频输入 | K230/KPU 兼容 INT8 模型 | 静态输入、芯片适配后处理、有限缓存和本地告警 | 已完成端侧部署测试，具体设备实现可独立维护 |
-| ESP32-S3 设备 | MCU 接入适配器 | 真实检测结果输入；摄像头模型需另行集成 | 当前固件不包含姿态模型 | 定长风险累计、本地队列与证据、独立网络任务 | 已实测 8 MB Flash / OPI PSRAM 设备烧录、路由器联网、HTTPS 绑定及心跳；MCU 相机推理未实测 |
+| XIAO ESP32-S3 Sense | MCU | 板载相机 | YOLO11n-Pose 192×192 INT8 | 双核推理、跟踪、低对比度保护、持久告警队列 | 实体板本地相机、视频、预览、重启和绑定实测 |
 
 “已部署测试”表示对应端侧链路已完成运行验证，不等同于覆盖所有场景的识别准确率认证，也不表示当前分支包含每一块设备的完整固件工程。
 
@@ -201,29 +205,9 @@ MCU 专用模型仍需针对相应硬件训练与实测，可采用以下优化�
 
 按 `p` 暂停/继续，按 `q` 或 ESC 退出。默认事件写入 `runs/events.jsonl`，不保存原始视频、图片、人脸或完整关键点。
 
-## 边缘 AI SoC 示例：MaixCAM 运行
+## MaixCAM 运行
 
-MaixCAM 版本直接使用板载摄像头、屏幕和 `/root/models/yolo11n_pose.mud`。从 Windows 部署：
-
-```powershell
-& platforms/maixcam/deploy.ps1
-```
-
-板上仅有约 128MB Linux 可见内存。通过 SSH 手动测试前，应先退出 Launcher 及其守护进程，避免与姿态模型同时占用多媒体内存：
-
-```sh
-killall launcher_daemon launcher 2>/dev/null || true
-cd /root/poseguard_maix
-python main.py --max-frames 300
-```
-
-现场快速测试风险计时：
-
-```sh
-python main.py --test-timers
-```
-
-测试结束后重启板子即可恢复原 Launcher。Maix 事件默认写入 `/root/poseguard_maix/data/events.jsonl`，不保存原始图像。
+通过 USB 网络将 `PoseGuard-MaixCAM-v1.6.0.tar.gz` 上传到板上，解压并运行 `python3 install.py --bind --autostart`。使用网页生成的 MaixCAM 一次性绑定码。应用从原有 Launcher 启动，使用板载摄像头、屏幕与 `/root/models/yolo11n_pose.mud`。安装、事件目录和恢复步骤见 [MaixCAM 使用说明](docs/MAIXCAM.zh-CN.md)。
 
 ## 边缘 AI SoC 示例：泰山派 RK3566 运行
 

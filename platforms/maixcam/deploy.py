@@ -3,10 +3,12 @@
 import argparse
 import getpass
 import posixpath
+import shlex
 from pathlib import Path
 
 
 EXCLUDED_MODULES = {"__init__.py", "deploy.py"}
+RUNTIME_ASSETS={"ca-bundle.pem"}
 PROTECTED_REMOTE_DIRS = {"/", "/root"}
 
 
@@ -17,7 +19,7 @@ def runtime_files(source_dir):
             path
             for path in source.iterdir()
             if path.is_file()
-            and path.suffix == ".py"
+            and(path.suffix == ".py"or path.name in RUNTIME_ASSETS)
             and path.name not in EXCLUDED_MODULES
         ),
         key=lambda path: path.name,
@@ -87,7 +89,7 @@ def deploy(host, user, password, remote_dir, source_dir=None):
         finally:
             sftp.close()
 
-        command = "python -m compileall -q {}".format(remote_dir)
+        command = "python3 -m compileall -q {}".format(shlex.quote(remote_dir))
         _, stdout, stderr = client.exec_command(command, timeout=20)
         output = stdout.read().decode("utf-8", "replace")
         error = stderr.read().decode("utf-8", "replace")
@@ -104,10 +106,10 @@ def deploy(host, user, password, remote_dir, source_dir=None):
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Deploy PoseGuard to MaixCAM")
-    parser.add_argument("--host", default="192.168.31.114")
+    parser.add_argument("--host", default="10.243.64.1")
     parser.add_argument("--user", default="root")
     parser.add_argument("--password")
-    parser.add_argument("--remote-dir", default="/root/poseguard_maix")
+    parser.add_argument("--remote-dir", default="/root/poseguard-maix")
     return parser.parse_args(argv)
 
 

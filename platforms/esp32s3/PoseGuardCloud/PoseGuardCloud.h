@@ -10,13 +10,17 @@
 #include <mbedtls/base64.h>
 
 #include <atomic>
+#include <algorithm>
+#include <functional>
 #include <memory>
+#include <vector>
 
 #include "CloudTlsClient.h"
+#include "BoundedHttpJson.h"
 #include "incident_counter.hpp"
 
-// Transport adapter. Feed this from a real detector or an authenticated local
-// gateway; this library does not pretend to run YOLO11 on an ESP32-S3.
+// Durable event/transport adapter. Sense builds run their model locally through
+// S3Pipeline; generic adapters can supply observations from their own detector.
 class PoseGuardCloud {
  public:
   bool begin(const char* server, const char* rootCA) {
@@ -59,6 +63,9 @@ class PoseGuardCloud {
     return !token.isEmpty() && !device.isEmpty();
   }
   void setPreviewAvailable(bool available) { if (!lock_) return; Guard guard(lock_); previewAvailable_ = available; }
+  void setDetectorAvailable(bool available) { if (!lock_) return; Guard guard(lock_); detectorAvailable_=available; }
+  void setObservationGrace(uint32_t ms) { if (!lock_) return; Guard guard(lock_); counts_.policy.grace_ms=constrain(ms,2000U,15000U); }
+  poseguard_cloud::Policy policy() const { Guard guard(lock_); return counts_.policy; }
   int lastHttpStatus() const { return lastHttpStatus_.load(); }
   uint32_t lastHeartbeatAgeSeconds() const {
     const auto heartbeat = lastHeartbeat_.load();
@@ -75,7 +82,8 @@ class PoseGuardCloud {
   // state: 0 normal, 1 orange candidate, 2 red alert; predicted frames use
   // fresh=false.
   void observe(int track, int risk, int state, bool fresh,
-               const uint8_t* croppedJPEG = nullptr, size_t length = 0) {
+               const uint8_t* croppedJPEG = nullptr, size_t length = 0,
+               const std::function<void(const uint8_t*&, size_t&)>& snapshot = {}) {
     if (!lock_ || risk < 1 || risk > 3) return;
     Guard guard(lock_);
     auto change = counts_.observe(track, risk, state, millis64(), fresh);
@@ -88,6 +96,8 @@ class PoseGuardCloud {
       local(c, "special_state_started");
     }
     if (change.report) {
+      // Decode/crop/encode evidence only when this observation will be queued.
+      if (snapshot) snapshot(croppedJPEG, length);
       if (!queue(c, change.escalated ? "escalated" : "created", croppedJPEG,
                  length)) {
         c.reported = change.escalated;
@@ -98,6 +108,14 @@ class PoseGuardCloud {
     }
   }
   // Call frequently from the inference loop; it only touches local storage.
+  void resetObservations(const char* reason) {
+    if(!lock_)return;
+    Guard guard(lock_);
+    counts_.reset([&](auto& counter){
+      local(counter,reason);
+      if(counter.reported){++counter.revision;queue(counter,"resolved");}
+    });
+  }
   void localTick() {
     if (!lock_) return;
     Guard guard(lock_);
@@ -124,13 +142,18 @@ class PoseGuardCloud {
         request["mode"] = mode_;
         request["fps"] = fps_;
         request["people"] = people_;
+        request["outbox_pending"] = pendingCountUnlocked();
         request["capabilities"]["preview"] = previewAvailable_;
-        request["capabilities"]["pose_overlay"] = false;
+        request["capabilities"]["pose_overlay"] = detectorAvailable_;
         request["capabilities"]["camera_orientation"] = previewAvailable_;
+#if defined(POSEGUARD_S3_MODEL)
+        request["capabilities"]["external_detections"] = false;
+#else
+        request["capabilities"]["external_detections"] = true;
+#endif
       }
-      request["firmware"] = "poseguard-esp32s3/1.3.0";
+      request["firmware"] = "poseguard-esp32s3/1.6.0";
       request["clock_synced"] = true;
-      request["capabilities"]["external_detections"] = true;
       request["capabilities"]["local_evidence"] = true;
       if (!post("/api/device/heartbeat", request, response)) {
         backoff();
@@ -143,6 +166,7 @@ class PoseGuardCloud {
         Guard guard(lock_);
         auto rules = response["rules"];
         counts_.policy.threshold = rules["frame_threshold"] | 100;
+        queueScanAfter_=0;
         counts_.policy.escalation = rules["escalation_threshold"] | 300;
         counts_.policy.include_candidates = rules["include_candidates"] | true;
         counts_.policy.grace_ms =
@@ -171,26 +195,39 @@ class PoseGuardCloud {
         post("/api/device/commands/" + id + "/ack", empty, ack);
       }
     }
+    if(queueScanAfter_ && int32_t(millis()-queueScanAfter_.load())<0)return;
     String file;
+    std::vector<String> candidates;
+    uint32_t generation=0,threshold=0;
     {
       Guard guard(lock_);
+      generation=queueRevision_.load();threshold=counts_.policy.threshold;
       File directory = LittleFS.open("/outbox");
       File item = directory.openNextFile();
       while (item) {
         String candidate = item.name();
-        if (candidate.endsWith(".json") && (file.isEmpty() || candidate < file))
-          file = candidate;
+        if(!item.isDirectory()&&candidate.endsWith(".json"))candidates.push_back(candidate);
         item = directory.openNextFile();
       }
     }
-    if (file.isEmpty()) return;
+    std::sort(candidates.begin(),candidates.end());
+    for(const auto& candidate:candidates) {
+      File item=LittleFS.open(candidate.startsWith("/")?candidate:"/outbox/"+candidate,"r");
+      JsonDocument metadata;
+      if(readStoredJson(item,metadata,true)&&(metadata["observed_frames"]|0U)>threshold) {
+        file=candidate;break;
+      }
+    }
+    if(file.isEmpty()) {
+      Guard guard(lock_);
+      queueScanAfter_=queueRevision_.load()==generation?millis()+30000:0;
+      return;
+    }
     String path = file.startsWith("/") ? file : "/outbox/" + file;
     JsonDocument payload, response;
-    {
-      Guard guard(lock_);
-      File f = LittleFS.open(path, "r");
-      if (!f || deserializeJson(payload, f)) return;
-    }
+    File pending=LittleFS.open(path,"r");
+    if(!readStoredJson(pending,payload))return;
+    pending.close();
     if (post("/api/device/events", payload, response) &&
         response["accepted"] == true) {
       Guard guard(lock_);
@@ -228,10 +265,37 @@ class PoseGuardCloud {
   float fps_{};
   int people_{};
   bool previewAvailable_{};
+  bool detectorAvailable_{};
   std::atomic<uint32_t> lastHeartbeat_{0};
   std::atomic<int> lastHttpStatus_{0};
+  std::atomic<uint32_t> queueScanAfter_{0};
+  std::atomic<uint32_t> queueRevision_{0};
   uint32_t retryAt_{};
   int failures_{};
+  bool readStoredJson(File& file,JsonDocument& output,bool framesOnly=false) const {
+    const size_t size=file?file.size():0;
+    if(!size||size>512*1024)return false;
+    std::unique_ptr<char,decltype(&free)> bytes(static_cast<char*>(malloc(size)),free);
+    if(!bytes)return false;
+    size_t used=0;
+    while(used<size) {
+      const size_t count=file.read(reinterpret_cast<uint8_t*>(bytes.get()+used),size-used);
+      if(!count)return false;
+      used+=count;
+    }
+    JsonDocument filter;filter["observed_frames"]=true;
+    const char* data=bytes.get(); // Read-only input makes JSON strings own their storage.
+    const auto error=framesOnly?deserializeJson(output,data,size,DeserializationOption::Filter(filter)):
+                                deserializeJson(output,data,size);
+    return !error;
+  }
+  uint32_t pendingCountUnlocked() const {
+    uint32_t count=0;
+    File directory=LittleFS.open("/outbox");
+    for(File file=directory.openNextFile();file;file=directory.openNextFile())
+      if(!file.isDirectory()&&String(file.name()).endsWith(".json"))++count;
+    return count;
+  }
   static uint64_t millis64() { return uint64_t(esp_timer_get_time() / 1000); }
   static String randomID() {
     char value[33];
@@ -319,6 +383,7 @@ class PoseGuardCloud {
       Serial.println("本地告警存储失败，请检查剩余空间");
       return false;
     }
+    queueRevision_.fetch_add(1);queueScanAfter_=0;
     local(c, type);
     return true;
   }
@@ -333,11 +398,14 @@ class PoseGuardCloud {
     http.setTimeout(12000);
     // New connections also work after a NAT, interface or source IP change.
     http.setReuse(false);
+    http.useHTTP10(true);
     if (!http.begin(tls, server_ + route)) {
       lastHttpStatus_ = -100;
       return false;
     }
     http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+    const char* retryHeaders[]={"Retry-After"};
+    http.collectHeaders(retryHeaders,1);
     http.addHeader("Content-Type", "application/json");
     http.setUserAgent("PoseGuard/1.3.0");
     if (authenticated) { Guard guard(lock_); http.addHeader("Authorization", "Bearer " + token_); }
@@ -351,8 +419,24 @@ class PoseGuardCloud {
                   tls.connectedAddress().toString().c_str(), tlsCode);
     if (status <= 0) Serial.printf("cloud_transport_error=%s\n", tlsError);
     lastHttpStatus_ = status;
+    if(status==503) {
+      const long seconds=http.header("Retry-After").toInt();
+      if(seconds>0)retryAt_=millis()+std::min(300L,seconds)*1000;
+    }
     if (status >= 200 && status < 300) {
-      auto error = deserializeJson(output, http.getString());
+      const bool error = !readBoundedHttpJson(http, output, 12000);
+      if (!error && output["network"]["host"].is<const char*>()) {
+        const String host = server_.substring(8);
+        if (output["network"]["host"] == host) {
+          std::vector<IPAddress> addresses;
+          const JsonArray candidates = output["network"]["addresses"].as<JsonArray>();
+          for (JsonVariant value : candidates) {
+            if (!value.is<const char*>()) continue;
+            IPAddress ip; if (ip.fromString(value.as<const char*>())) addresses.push_back(ip);
+          }
+          CloudTlsClient::setRouteHints(host, addresses, output["network"]["expires_unix"] | uint64_t(0));
+        }
+      }
       if (error) {
         http.setReuse(false);
         tls.noteHttpResult(-101);
@@ -367,6 +451,7 @@ class PoseGuardCloud {
   }
   void backoff() {
     failures_ = min(4, failures_ + 1);
-    retryAt_ = millis() + (1000UL << failures_);
+    const uint32_t candidate=millis()+(1000UL<<failures_);
+    if(!retryAt_ || int32_t(candidate-retryAt_)>0)retryAt_=candidate;
   }
 };

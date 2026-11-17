@@ -1,7 +1,7 @@
 param(
-    [string]$HostName = "192.168.31.114",
+    [string]$HostName = "10.243.64.1",
     [string]$UserName = "root",
-    [string]$RemoteDir = "/root/poseguard_maix"
+    [string]$RemoteDir = "/root/poseguard-maix"
 )
 
 python "$PSScriptRoot/deploy.py" `

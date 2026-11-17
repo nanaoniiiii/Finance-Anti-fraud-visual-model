@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "CloudTlsClient.h"
+#include "BoundedRead.h"
 #include "PoseGuardCloud.h"
 
 class PreviewTlsTransport : public websockets::network::TcpClient {
@@ -40,6 +41,7 @@ class PreviewTlsTransport : public websockets::network::TcpClient {
     websockets::WSString line;
     const uint32_t start = millis();
     while (available() && millis() - start < 3500 && line.size() < 2048) {
+      if(tls_.available()<=0){vTaskDelay(1);continue;}
       const int ch = tls_.read();
       if (ch >= 0) { line += static_cast<char>(ch); if (ch == '\n') break; }
       else vTaskDelay(1);
@@ -47,8 +49,7 @@ class PreviewTlsTransport : public websockets::network::TcpClient {
     return line;
   }
   uint32_t read(uint8_t* buffer, uint32_t length) override {
-    const int n = tls_.read(buffer, length);
-    return n > 0 ? n : 0;
+    return poseguard_network::read_exact(tls_,buffer,length,3500,[]{return millis();},[]{vTaskDelay(1);});
   }
  protected:
   int getSocket() const override { return -1; }
@@ -56,6 +57,9 @@ class PreviewTlsTransport : public websockets::network::TcpClient {
   CloudTlsClient tls_;
 };
 
+#if defined(POSEGUARD_S3_MODEL)
+#include "S3Pipeline.h"
+#else
 class SenseCameraPreview {
  public:
   void begin(PoseGuardCloud& cloud, const char* ca) {
@@ -191,4 +195,5 @@ class SenseCameraPreview {
     }
   }
 };
+#endif
 #endif

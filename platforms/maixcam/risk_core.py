@@ -17,7 +17,7 @@ class RiskEngine:
         multi_seconds=1.2,
         lingering_seconds=20.0,
         release_seconds=0.8,
-        wrist_ear_ratio=0.14,
+        wrist_ear_ratio=0.28,
         forearm_min_ratio=0.08,
         torso_vertical_ratio=0.45,
         standing_span_ratio=0.42,
@@ -181,7 +181,10 @@ class RiskEngine:
             ("left", 3, 5, 7, 9),
             ("right", 4, 6, 8, 10),
         ):
-            ear = points[ear_index]
+            # A handset can occlude the ear. Use an observed eye/nose as a
+            # head reference in that case; never invent a missing keypoint.
+            eye_index=1 if ear_index==3 else 2
+            ear = points[ear_index] or points[eye_index] or points[0]
             shoulder = points[shoulder_index]
             elbow = points[elbow_index]
             wrist = points[wrist_index]
@@ -199,26 +202,19 @@ class RiskEngine:
     def _upright(self, points, body_height):
         left_shoulder, right_shoulder = points[5], points[6]
         left_hip, right_hip = points[11], points[12]
-        if None in (left_shoulder, right_shoulder, left_hip, right_hip):
+        if None in (left_shoulder,right_shoulder):
             return False
         shoulder_mid = self._midpoint(left_shoulder, right_shoulder)
-        hip_mid = self._midpoint(left_hip, right_hip)
-        vertical = hip_mid[1] - shoulder_mid[1]
-        if vertical <= 0:
+        head=[point for point in points[:5]if point is not None]
+        if not head or sum(point[1]for point in head)/len(head)>=shoulder_mid[1]-body_height*.02:
             return False
-        if abs(hip_mid[0] - shoulder_mid[0]) / max(abs(vertical), 1.0) > self.torso_vertical_ratio:
-            return False
-
-        for hip_index, knee_index, ankle_index in ((11, 13, 15), (12, 14, 16)):
-            hip, knee, ankle = points[hip_index], points[knee_index], points[ankle_index]
-            if hip is None or knee is None or knee[1] <= hip[1]:
-                continue
-            if knee[1] - shoulder_mid[1] < body_height * self.standing_span_ratio:
-                continue
-            if ankle is not None and ankle[1] <= knee[1]:
-                continue
-            return True
-        return False
+        if left_hip is not None and right_hip is not None:
+            hip_mid=self._midpoint(left_hip,right_hip);vertical=hip_mid[1]-shoulder_mid[1]
+            if vertical<=0 or abs(hip_mid[0]-shoulder_mid[0])/max(vertical,1)>self.torso_vertical_ratio:
+                return False
+        # Phone evidence depends on the visible head, shoulder and arm. Knees
+        # and ankles can be outside an ATM camera's field of view or seated.
+        return True
 
     def _inside(self, track, frame_size):
         width, height = frame_size

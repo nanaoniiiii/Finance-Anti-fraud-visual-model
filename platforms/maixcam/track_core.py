@@ -23,6 +23,7 @@ class TrackManager:
         *,
         minimum_confidence=0.35,
         max_missing_seconds=0.8,
+        unconfirmed_missing_seconds=None,
         smoothing_alpha=0.55,
         maximum_match_cost=1.15,
         min_confirmed_hits=2,
@@ -33,6 +34,7 @@ class TrackManager:
         self.smoothing_alpha = float(smoothing_alpha)
         self.maximum_match_cost = float(maximum_match_cost)
         self.min_confirmed_hits = int(min_confirmed_hits)
+        self.unconfirmed_missing_seconds=unconfirmed_missing_seconds
         self.max_tracks = int(max_tracks)
         self._tracks = {}
         self._next_id = 1
@@ -42,6 +44,8 @@ class TrackManager:
 
     def update(self, observations, timestamp):
         timestamp = float(timestamp)
+        self._tracks={key:track for key,track in self._tracks.items()
+                      if 0<=timestamp-track['last_seen']<=self._missing_limit(track)}
         candidates = sorted(
             (
                 item
@@ -79,7 +83,7 @@ class TrackManager:
                     candidates[observation_index],
                     timestamp,
                 )
-            elif timestamp - track["last_seen"] <= self.max_missing_seconds:
+            elif timestamp - track["last_seen"] <= self._missing_limit(track):
                 predicted = dict(track)
                 predicted["predicted"] = True
                 predicted["pose_motion"] = 0.0
@@ -102,6 +106,9 @@ class TrackManager:
             for track_id in sorted(updated)
             if updated[track_id]["confirmed"]
         ]
+
+    def _missing_limit(self,track):
+        return self.max_missing_seconds if track['confirmed']or self.unconfirmed_missing_seconds is None else float(self.unconfirmed_missing_seconds)
 
     def _new_track(self, observation, timestamp):
         bbox = tuple(observation["bbox"])

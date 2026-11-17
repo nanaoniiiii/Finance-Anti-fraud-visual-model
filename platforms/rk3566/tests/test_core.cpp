@@ -241,13 +241,37 @@ bool test_short_dropout_keeps_track() {
   return true;
 }
 
+bool test_unconfirmed_noise_does_not_accumulate_across_gaps() {
+  poseguard::CoreConfig config;
+  config.confirmation_frames=3;
+  config.missing_track_seconds=5;
+  config.unconfirmed_missing_seconds=.35;
+  PoseCore core(config);
+  auto first=core.update_tracks({standing_person(300)},0);
+  const int initial=first.front().track_id;
+  CHECK(!first.front().confirmed);
+  core.update_tracks({},.2);
+  auto again=core.update_tracks({standing_person(300)},.6);
+  CHECK(again.size()==1U && again.front().track_id!=initial && !again.front().confirmed);
+  core.update_tracks({standing_person(300)},.7);
+  auto confirmed=core.update_tracks({standing_person(300)},.8);
+  CHECK(confirmed.front().confirmed);
+  const int stable=confirmed.front().track_id;
+  auto hidden=core.update_tracks({},2);
+  CHECK(hidden.size()==1U && hidden.front().track_id==stable && hidden.front().predicted);
+  auto returned=core.update_tracks({standing_person(305)},3);
+  CHECK(returned.size()==1U && returned.front().track_id==stable && returned.front().confirmed);
+  return true;
+}
+
 }  // namespace
 
 int main() {
   if (!test_phone_to_ear() || !test_multi_person() || !test_lingering() ||
       !test_motion_resets_lingering() || !test_short_dropout_keeps_track() ||
       !test_close_up_tracking_and_phone() || !test_normal_hands_and_raised_arms_not_phone() ||
-      !test_confirmed_alert_survives_brief_negative()) {
+      !test_confirmed_alert_survives_brief_negative() ||
+      !test_unconfirmed_noise_does_not_accumulate_across_gaps()) {
     return 1;
   }
   std::cout << "core-risk-ok\n";

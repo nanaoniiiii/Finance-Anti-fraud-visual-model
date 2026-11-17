@@ -62,6 +62,27 @@ def test_single_hand_near_ear_becomes_alert_after_hold():
     assert decisions_for(alert, "phone_to_ear")[0]["state"] == "alert"
 
 
+def test_phone_remains_observable_when_legs_and_hips_are_outside_camera():
+    person=track(1,left_phone=True);points=list(person['keypoints'])
+    for index in range(11,17):points[index]=None
+    person['keypoints']=tuple(points)
+    result=RiskEngine().evaluate([person],(320,224),1.)
+    assert decisions_for(result,'phone_to_ear')[0]['state']=='candidate'
+
+
+def test_handset_occluding_ear_uses_observed_head_reference():
+    person=track(1,left_phone=True);points=list(person['keypoints']);points[3]=None
+    person['keypoints']=tuple(points)
+    assert decisions_for(RiskEngine().evaluate([person],(320,224),1.),'phone_to_ear')
+
+
+def test_missing_head_cannot_form_phone_evidence():
+    person=track(1,left_phone=True);points=list(person['keypoints'])
+    for index in range(5):points[index]=None
+    person['keypoints']=tuple(points)
+    assert decisions_for(RiskEngine().evaluate([person],(320,224),1.),'phone_to_ear')==[]
+
+
 def test_double_hand_near_ears_is_not_phone_candidate():
     engine = RiskEngine(phone_seconds=1.0)
 

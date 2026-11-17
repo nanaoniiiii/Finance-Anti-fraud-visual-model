@@ -29,6 +29,9 @@ struct CoreConfig {
   float lingering_pose_motion_ratio{0.04F};
   double lingering_alert_seconds{20.0};
   double alert_release_seconds{0.8};
+  // Optional shorter lifetime for observations not yet confirmed as people.
+  // Zero preserves the normal missing-track policy for existing deployments.
+  double unconfirmed_missing_seconds{0.0};
 };
 
 class PoseCore {

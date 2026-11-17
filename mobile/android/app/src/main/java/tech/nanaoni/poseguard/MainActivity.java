@@ -28,12 +28,13 @@ import org.json.JSONObject;
 public final class MainActivity extends Activity {
     private WebView web;
     private PreviewSocket preview;
-    private boolean resumed;
+    private volatile boolean resumed;
     private boolean migratingAssets;
     private final ExecutorService requests = Executors.newFixedThreadPool(6);
     @Override
     public void onCreate(Bundle state) {
         super.onCreate(state);
+        Network.refreshRoutes();
         getWindow().setStatusBarColor(Color.rgb(16, 26, 41));
         getWindow().setNavigationBarColor(Color.rgb(16, 26, 41));
         web = new WebView(this);
@@ -107,6 +108,8 @@ public final class MainActivity extends Activity {
                 if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR)
                     android.util.Log.e(
                         "PoseGuardWeb", message.message() + " at line " + message.lineNumber());
+                else if (message.message().startsWith("PG_PREVIEW "))
+                    android.util.Log.i("PoseGuardWeb", message.message());
                 return true;
             }
         });
@@ -236,6 +239,10 @@ public final class MainActivity extends Activity {
             startAlerts();
     }
     final class NativeAPI {
+        @JavascriptInterface
+        public boolean isForeground() {
+            return resumed;
+        }
         @JavascriptInterface
         public void openPreview(String id, String path) {
             runOnUiThread(() -> {

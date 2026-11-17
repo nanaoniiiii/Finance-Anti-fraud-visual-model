@@ -1,0 +1,28 @@
+[Unit]
+Description=PoseGuard local vision detection and cloud sync
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=poseguard
+Group=poseguard
+SupplementaryGroups=video
+WorkingDirectory=/opt/poseguard/current
+ExecStart=/opt/poseguard/venv/bin/python -m poseguard.service
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+UMask=0077
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/poseguard /var/log/poseguard
+
+[Install]
+WantedBy=multi-user.target

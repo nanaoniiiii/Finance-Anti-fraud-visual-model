@@ -22,6 +22,16 @@ def test_track_id_survives_short_dropout():
     assert recovered["predicted"] is False
 
 
+def test_confirmed_track_keeps_id_during_longer_occlusion_but_weak_hit_expires():
+    manager=TrackManager(min_confirmed_hits=2,max_missing_seconds=5,unconfirmed_missing_seconds=.35)
+    assert manager.update([observation()],1.)==[]
+    assert manager.update([observation()],1.5)==[]
+    confirmed=manager.update([observation()],1.6)[0]
+    assert confirmed['track_id']==2
+    assert manager.update([],5.)[0]['predicted']
+    assert manager.update([observation()],5.1)[0]['track_id']==confirmed['track_id']
+
+
 def test_track_expires_after_missing_grace():
     manager = TrackManager(min_confirmed_hits=1, max_missing_seconds=0.8)
     manager.update([observation()], 1.0)

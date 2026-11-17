@@ -9,7 +9,9 @@
 #include <lwip/netdb.h>
 
 #include <array>
+#include <atomic>
 #include <mutex>
+#include <vector>
 
 // The Arduino resolver may return just one address. Ask the router's DNS
 // server for all IPv4 candidates after a failed TLS or HTTP request.
@@ -21,11 +23,23 @@ class CloudTlsClient : public WiFiClientSecure {
   int connect(const char* host, uint16_t port, int32_t timeout) override {
     selected_ = IPAddress();
     selectedHost_ = host;
+    const auto hints = hintsFor(host);
     IPAddress failed, preferred;
     {
       std::lock_guard<std::mutex> guard(routesMutex_);
       if (failedHost_ == host) failed = failed_;
       if (preferredHost_ == host) preferred = preferred_;
+    }
+    const bool preferredHint = std::find(hints.begin(), hints.end(), preferred) != hints.end();
+    if (preferred != IPAddress() && preferred != failed && (hints.empty() || preferredHint) &&
+        tryAddress(preferred, host, port, timeout)) {
+      remember(host, preferred); return 1;
+    }
+    for (const auto& address : hints) {
+      if (address == failed || address == preferred) continue;
+      if (tryAddress(address, host, port, timeout)) {
+        remember(host, address); return 1;
+      }
     }
     // A server can complete TLS but then stop replying to HTTP. Try another
     // verified address before reusing that route after a transport failure.
@@ -38,10 +52,6 @@ class CloudTlsClient : public WiFiClientSecure {
           return 1;
         }
       }
-    }
-    if (preferred != IPAddress() && tryAddress(preferred, host, port, timeout)) {
-      remember(host, preferred);
-      return 1;
     }
     // Network.hostByName in Core 3.3.2 can clear the shared DNS cache from
     // the calling task, invoking an SNTP callback outside the TCP/IP core.
@@ -71,6 +81,52 @@ class CloudTlsClient : public WiFiClientSecure {
   }
 
   IPAddress connectedAddress() const { return selected_; }
+  static std::vector<IPAddress> routeCandidates(const char* host) {
+    std::vector<IPAddress> result;
+    auto add = [&](IPAddress address) {
+      if (address == IPAddress()) return;
+      for (const auto& old : result)
+        if (old == address) return;
+      result.push_back(address);
+    };
+    const auto hints = hintsFor(host);
+    {
+      std::lock_guard<std::mutex> guard(routesMutex_);
+      if (preferredHost_ == host &&
+          (hints.empty() || std::find(hints.begin(), hints.end(), preferred_) != hints.end())) add(preferred_);
+    }
+    for (const auto& address : hints) add(address);
+    if (!hints.empty()) return result;
+    const auto defaults = resolveSystem(host);
+    for (size_t i = 0; i < defaults.count; ++i) add(defaults.items[i]);
+    const auto router = queryRouter(host);
+    for (size_t i = 0; i < router.count; ++i) add(router.items[i]);
+    return result;
+  }
+  static void setRouteHints(const String& host, const std::vector<IPAddress>& addresses, uint64_t expires) {
+    const uint64_t now = time(nullptr);
+    if (now < 1704067200 || expires <= now || expires > now + 3600 || addresses.empty()) return;
+    std::vector<IPAddress> accepted;
+    for (const auto& ip : addresses) {
+      const unsigned a = ip[0], b = ip[1];
+      if (!a || a >= 224 || a == 10 || a == 127 ||
+          (a == 169 && b == 254) || (a == 172 && b >= 16 && b <= 31) ||
+          (a == 192 && (b == 168 || b == 0)) ||
+          (a == 100 && b >= 64 && b <= 127) || (a == 198 && (b == 18 || b == 19))) continue;
+      accepted.push_back(ip); if (accepted.size() == 4) break;
+    }
+    if (accepted.empty()) return;
+    std::lock_guard<std::mutex> guard(routesMutex_);
+    if (hintsHost_ != host || hints_ != accepted) ++routesRevision_;
+    hintsHost_ = host; hints_ = accepted; hintsExpires_ = expires;
+  }
+  static uint32_t routeRevision() {return routesRevision_.load();}
+  static void routeFailed(const String& host, IPAddress address) {
+    if (address == IPAddress()) return;
+    std::lock_guard<std::mutex> guard(routesMutex_);
+    failedHost_ = host; failed_ = address;
+    if (preferredHost_ == host && preferred_ == address) preferred_ = IPAddress();
+  }
 
   void noteHttpResult(int status) {
     std::lock_guard<std::mutex> guard(routesMutex_);
@@ -101,6 +157,14 @@ class CloudTlsClient : public WiFiClientSecure {
   inline static String failedHost_;
   inline static IPAddress failed_;
   inline static std::mutex routesMutex_;
+  inline static String hintsHost_;
+  inline static std::vector<IPAddress> hints_;
+  inline static uint64_t hintsExpires_{};
+  inline static std::atomic<uint32_t> routesRevision_{};
+  static std::vector<IPAddress> hintsFor(const char* host) {
+    std::lock_guard<std::mutex> guard(routesMutex_);
+    return hintsHost_ == host && uint64_t(time(nullptr)) < hintsExpires_ ? hints_ : std::vector<IPAddress>{};
+  }
 
   bool tryAddress(IPAddress address, const char* host, uint16_t port,
                   int32_t timeout) {

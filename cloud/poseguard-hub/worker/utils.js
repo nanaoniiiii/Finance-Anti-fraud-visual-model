@@ -9,6 +9,7 @@ export const now = () => new Date().toISOString();
 export const uid = () => crypto.randomUUID();
 export const platforms = new Set([
   'windows',
+  'linux',
   'rk3566',
   'maixcam',
   'esp32s3',

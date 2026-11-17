@@ -72,9 +72,15 @@ def passes_quality(bbox, keypoints, confidence, frame_size, settings):
 
     visible = sum(point is not None for point in keypoints)
     torso_visible = sum(keypoints[index] is not None for index in TORSO_INDICES)
+    shoulders=keypoints[5]is not None and keypoints[6]is not None
+    head=[keypoints[index]for index in(0,1,2,3,4)if keypoints[index]is not None]
+    valid_y=[point[1]for point in keypoints if point is not None]
+    point_span=max(valid_y)-min(valid_y)if valid_y else 0
+    strong_person=confidence>=.75 and visible>=7 and shoulders and point_span>=max(1,bbox[3]-bbox[1])*.15
+    upper_body=strong_person and len(head)>=3 and sum(p[1]for p in head)/len(head)<(keypoints[5][1]+keypoints[6][1])/2
     if visible < settings["minimum_visible_keypoints"]:
         return False
-    if torso_visible < settings["minimum_torso_keypoints"]:
+    if torso_visible < settings["minimum_torso_keypoints"] and not upper_body:
         return False
 
     width, height = frame_size
@@ -88,11 +94,7 @@ def passes_quality(bbox, keypoints, confidence, frame_size, settings):
 
     area = box_width * box_height
     area_ratio = area / float(width * height)
-    if not (
-        settings["minimum_bbox_area_ratio"]
-        <= area_ratio
-        <= settings["maximum_bbox_area_ratio"]
-    ):
+    if area_ratio<settings["minimum_bbox_area_ratio"] or(area_ratio>settings["maximum_bbox_area_ratio"]and not(strong_person and area_ratio<=1.0)):
         return False
 
     clipped_width = max(min(x2, width) - max(x1, 0.0), 0.0)

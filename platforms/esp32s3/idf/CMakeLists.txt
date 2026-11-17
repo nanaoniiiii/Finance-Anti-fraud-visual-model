@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.24)
+set(PROJECT_VER "1.6.0")
+add_compile_definitions(ARDUINO_USB_CDC_ON_BOOT=0 ARDUINO_USB_MODE=1)
+set(EXTRA_COMPONENT_DIRS "${CMAKE_SOURCE_DIR}/components/arduino" "$ENV{PG_ESPDL_DIR}/esp-dl")
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+project(poseguard_s3)

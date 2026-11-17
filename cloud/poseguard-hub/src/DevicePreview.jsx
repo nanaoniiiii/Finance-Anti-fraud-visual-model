@@ -9,9 +9,13 @@ import {
   Wifi,
 } from "lucide-react";
 import { parseFrame } from "../shared/preview.js";
+import { clearFrames, selectFrame, storeFrame, frameIsStale } from "./preview-frames.js";
+import { previewRetryDelay } from './preview-reconnect.js';
+import {previewForeground}from'./preview-foreground.js';
 import "./preview.css";
 
 const nativeViews = new Map();
+const foreground=()=>previewForeground(window.PoseGuardNative,document.hidden);
 window.__poseguardPreviewNative = (id, kind, value) =>
   nativeViews.get(id)?.(kind, value);
 const labels = {
@@ -151,6 +155,7 @@ function paint(canvas, item, overlay, fps, stale) {
   ctx.clip();
   ctx.save();
   ctx.translate(dx + dw / 2, dy + dh / 2);
+  ctx.scale(m.display_mirror ? -1 : 1, 1);
   ctx.rotate((angle * Math.PI) / 180);
   ctx.drawImage(
     item.image,
@@ -204,11 +209,15 @@ function paint(canvas, item, overlay, fps, stale) {
   const risk =
     m.risks.find((r) => r.state === "alert") ||
     m.risks.find((r) => r.state === "candidate");
+  const unavailable = m.observation_available === false;
+  const qualityTitle = m.input_quality === "low_light" ? "光照不足 · 检测不可用" :
+    m.input_quality === "overexposed" ? "画面过曝 · 检测不可用" :
+    m.input_quality === "low_contrast" ? "画面对比度不足 · 检测不可用" : "画面不可用";
   const title = stale
     ? "检测状态已过期"
     : !m.detector_ready
-      ? "相机预览 · 姿态未接入"
-      : risk
+      ? m.detector_paused ? "检测已暂停" : m.detector_present ? "检测器正在准备" : "相机预览 · 姿态未接入"
+      : unavailable ? qualityTitle : risk
         ? labels[risk.kind] || "特殊状态"
         : m.people
           ? "正常"
@@ -217,7 +226,7 @@ function paint(canvas, item, overlay, fps, stale) {
     ? "#b6becb"
     : !m.detector_ready
       ? "#b7d4ff"
-      : risk?.state === "alert"
+      : unavailable ? "#ffc568" : risk?.state === "alert"
         ? "#ff8585"
         : risk
           ? "#ffc568"
@@ -226,7 +235,7 @@ function paint(canvas, item, overlay, fps, stale) {
   ctx.font = `600 ${font}px sans-serif`;
   const lines = [
     title,
-    m.detector_ready ? `${m.people ?? m.tracks.length} 人${m.source_type === "video" ? " · 视频回放" : ""}` : "识别未启用",
+    m.detector_ready ? unavailable ? "请调整照明或检查镜头" : `${m.people ?? m.tracks.length} 人${m.source_type === "video" ? " · 视频回放" : ""}` : "识别未启用",
   ];
   if (overlay)
     lines.push(
@@ -279,8 +288,10 @@ export default function DevicePreview({
     canvas = useRef(null),
     owner = useRef({ mounted: false }),
     latest = useRef(null),
+    frames = useRef({raw:null,pose:null}),
     overlayRef = useRef(false),
     profileRef = useRef("balanced"),
+    retry = useRef({attempt:0,timer:null}),
     meter = useRef({
       frames: 0,
       bytes: 0,
@@ -289,16 +300,18 @@ export default function DevicePreview({
       fps: 0,
     });
   const supported = device.health?.capabilities?.preview === true;
-  const cameraOnly = info?.detector_ready === false || device.health?.capabilities?.pose_overlay === false;
+  const cameraOnly = info ? info.detector_present === true ? false : info.detector_ready === false : device.health?.capabilities?.pose_overlay === false;
   const redraw = () =>
     paint(
       canvas.current,
       latest.current,
       overlayRef.current,
       meter.current.fps,
-      performance.now() - meter.current.last > 2500,
+      frameIsStale(latest.current, meter.current.last, performance.now(), Date.now()),
     );
   const stop = () => {
+    clearTimeout(retry.current.timer);
+    retry.current.timer = null;
     const c = owner.current;
     c.wanted = false;
     c.mounted = false;
@@ -335,6 +348,7 @@ export default function DevicePreview({
     if (!c.mounted || owner.current !== c || !c.wanted) return;
     c.pending = new Map();
     c.lastSequence = 0;
+    c.jpegSequence = {};
     c.epoch = null;
     const send = (value) => {
       if (c.id === id && c.wanted) c.connection?.send(value);
@@ -343,20 +357,29 @@ export default function DevicePreview({
       send({
         type: "keepalive",
         profile: profileRef.current,
+        view:overlayRef.current?'pose':'raw',
         codecs: c.codecs,
+        jpeg_window:8,
       });
     c.keep = keep;
     const ack = (m) =>
       send({ type: "ack", sequence: m.sequence, epoch: m.stream_epoch });
     const present = (image, m) => {
-      if (!c.mounted || owner.current !== c || !c.wanted) {
+      if (!c.mounted || owner.current !== c || !c.wanted || c.id!==id) {
+        if (!c.dropTraced) { console.info('PG_PREVIEW discarded after viewer stop'); c.dropTraced = true; }
         image.close?.();
         return;
       }
-      latest.current?.image.close?.();
-      latest.current = { image, meta: m };
-      meter.current.frames++;
-      meter.current.last = performance.now();
+      const role=m.frame_role||"legacy";
+      const epoch=m.stream_epoch||m.source_epoch;
+      if(c.jpegEpoch!==epoch){clearFrames(frames.current);latest.current=null;c.jpegSequence={};c.jpegEpoch=epoch;}
+      if(m.codec==="jpeg" && (c.jpegSequence[role]||0)>=m.sequence){image.close?.();ack(m);return;}
+      c.jpegSequence[role]=m.sequence;
+      const previous=latest.current;
+      if(!storeFrame(frames.current,{image,meta:m})){ack(m);return;}
+      retry.current.attempt = 0;
+      latest.current=selectFrame(frames.current,overlayRef.current);
+      if(latest.current!==previous){meter.current.frames++;meter.current.last=performance.now();}
       setState("实时画面");
       const signature = [
         m.width,
@@ -372,6 +395,7 @@ export default function DevicePreview({
       }
       setApplied(m.camera_applied_version ?? -1);
       redraw();
+      if (!c.presentTraced) { console.info('PG_PREVIEW presented ' + (m.frame_role || 'legacy')); c.presentTraced = true; }
       if (m.codec === "jpeg") ack(m);
     };
     const jpegFallback = () => {
@@ -400,10 +424,24 @@ export default function DevicePreview({
         if (close.code === 4002) {
           setError("画面接收过慢，预览已暂停；可选择省流模式后重新请求。");
         }
-        if (close.code === 4001 && c.wanted && !document.hidden) {
-          start();
+        const delay = c.wanted ? previewRetryDelay(close.code, retry.current.attempt,
+                                                  close.reason, foreground()) : null;
+        if (delay !== null) {
+          const closedConnection = c.connection;
+          c.connection = null;
+          closedConnection?.close();
+          closeDecoder(c);
+          setError('');
+          setState('连接中断，正在重新连接');
+          clearTimeout(retry.current.timer);
+          retry.current.attempt++;
+          retry.current.timer = setTimeout(() => {
+            if (owner.current === c && c.mounted && c.wanted && foreground()) start();
+          }, delay);
           return;
         }
+        clearTimeout(retry.current.timer);
+        retry.current.timer = null;
         setState(
           close.reason === "app_background"
             ? "已暂停（应用在后台）"
@@ -438,14 +476,19 @@ export default function DevicePreview({
         return;
       }
       if (kind !== "binary") return;
+      const trace = !c.binaryTraced;
+      c.binaryTraced = true;
+      if (trace) console.info('PG_PREVIEW binary bytes=' + value.byteLength);
       let failedMeta;
       try {
         meter.current.bytes += value.byteLength;
         const { meta: m, payload } = parseFrame(value);
+        if (trace) console.info('PG_PREVIEW parsed ' + (m.frame_role || 'legacy') + ' tracks=' + m.tracks.length);
         failedMeta = m;
         if (m.codec === "jpeg") {
           if (c.decoder) closeDecoder(c);
           const image = await bitmap(payload);
+          if (trace) console.info('PG_PREVIEW decoded ' + image.width + 'x' + image.height);
           if (
             (image.width || image.naturalWidth) !== m.width ||
             (image.height || image.naturalHeight) !== m.height
@@ -519,6 +562,7 @@ export default function DevicePreview({
         // four-frame network window deadlocks the decoder waiting for input.
         ack(m);
       } catch (e) {
+        if (trace) console.info('PG_PREVIEW frame_error ' + (e.name || 'Error'));
         if (failedMeta) ack(failedMeta);
         setError(e.message || "画面解码失败");
         send({ type: "keyframe" });
@@ -547,7 +591,7 @@ export default function DevicePreview({
     const resize = new ResizeObserver(redraw);
     if (stage.current) resize.observe(stage.current);
     const hidden = () => {
-      if (document.hidden) {
+      if (!foreground()) {
         stop();
         setWanted(false);
         setState("已暂停（页面在后台）");
@@ -578,7 +622,7 @@ export default function DevicePreview({
       resize.disconnect();
       clearInterval(tick);
       document.removeEventListener("visibilitychange", hidden);
-      latest.current?.image.close?.();
+      clearFrames(frames.current);
       latest.current = null;
     };
   }, [device.id]);
@@ -630,6 +674,8 @@ export default function DevicePreview({
               onClick={() => {
                 setOverlay(false);
                 overlayRef.current = false;
+                latest.current=selectFrame(frames.current,false);
+                owner.current.keep?.();
                 redraw();
               }}
             >
@@ -642,6 +688,8 @@ export default function DevicePreview({
               onClick={() => {
                 setOverlay(true);
                 overlayRef.current = true;
+                latest.current=selectFrame(frames.current,true);
+                owner.current.keep?.();
                 redraw();
               }}
             >
@@ -713,7 +761,7 @@ export default function DevicePreview({
         {error && <div className="form-message preview-error">{error}</div>}
         {info && !info.detector_ready && (
           <p className="preview-hint">
-            这台设备当前提供相机预览，尚未接入姿态检测器；帧率仍会显示。
+            {info.detector_paused ? "检测处于维护测试暂停状态，当前仅显示相机画面。" : info.detector_present ? "检测器正在加载或恢复，请稍候。" : "这台设备当前提供相机预览，尚未接入姿态检测器；帧率仍会显示。"}
           </p>
         )}
         <div className="preview-camera-settings">
@@ -759,7 +807,7 @@ export default function DevicePreview({
           </small>
         </div>
         <p className="preview-hint">
-          同一设备共用一路上传；切换原始/检测画面只改变本机叠加。关闭窗口或切到后台会停止观看。
+          同一设备共用一路上传，只传送观看端需要的画面。关闭窗口或切到后台会停止观看。
         </p>
       </div>
     </Modal>

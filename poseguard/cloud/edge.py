@@ -63,16 +63,18 @@ def valid_server(url):
 def http_json(server, path, payload, token=None, timeout=12):
     request = urllib.request.Request(valid_server(server) + path,
         data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
-        headers={"Content-Type": "application/json", "User-Agent": "PoseGuard/1.2.0", **({"Authorization": "Bearer " + token} if token else {})}, method="POST")
+        headers={"Content-Type": "application/json", "User-Agent": "PoseGuard/1.6.0", **({"Authorization": "Bearer " + token} if token else {})}, method="POST")
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.load(response)
 
 
-def enroll(server, code, platform, path):
+def enroll(server, code, platform, path, *, transport=None):
     server = valid_server(server)
-    result = http_json(server, "/api/enroll", {"code": code, "platform": platform})
+    send = transport or http_json
+    result = send(server, "/api/enroll", {"code": code, "platform": platform})
     config = {"server_url": server, "device_id": result["device_id"],
               "device_token": result["device_token"], "platform": platform,
+              "is_test": bool(result.get("is_test", False)),
               "rules": result.get("rules", DEFAULT_RULES), "data_directory": str(Path(path).parent / "cloud-data")}
     atomic_json(path, config, private=True)
     return {"device_id": config["device_id"], "platform": platform, "config_path": str(path)}
@@ -216,21 +218,56 @@ class IncidentMonitor:
 
 
 class CloudRelay:
-    def __init__(self, config_path, *, health=None):
+    def __init__(self, config_path, *, health=None, transport=None):
         self.config_path = Path(config_path)
         self.config = json.loads(self.config_path.read_text(encoding="utf-8"))
         self.config["server_url"] = valid_server(self.config["server_url"])
         self.directory = Path(self.config["data_directory"])
         (self.directory / "outbox").mkdir(parents=True, exist_ok=True)
+        try:
+            saved_rules = json.loads((self.directory / "policy.json").read_text(encoding="utf-8"))
+            if isinstance(saved_rules, dict):
+                self.config["rules"] = {**self.config.get("rules", {}), **saved_rules}
+        except (OSError, ValueError):
+            pass
         self.health = health or (lambda: {})
+        self.transport = transport
         self.stop_event = threading.Event()
         self.last_error = ""
         self.thread = None
+        self._deferred = {}
 
     def start(self):
         self.thread = threading.Thread(target=self._run, name="poseguard-cloud", daemon=True)
         self.thread.start()
         return self
+
+    def pending_payloads(self,limit=12):
+        """Retain old-policy files without blocking later eligible revisions."""
+        threshold=int(self.config.get('rules',DEFAULT_RULES).get('frame_threshold',100))
+        selected=0
+        existing=set()
+        for path in sorted((self.directory/'outbox').glob('*.json')):
+            existing.add(path)
+            try:
+                info=path.stat();fingerprint=(info.st_mtime_ns,info.st_size,threshold)
+                if self._deferred.get(path)==fingerprint:continue
+                payload=json.loads(path.read_text(encoding='utf-8'))
+                frames=int(payload['observed_frames'])
+            except (ValueError,OSError,KeyError,TypeError):
+                quarantine=self.directory/'rejected';quarantine.mkdir(exist_ok=True)
+                if path.exists():os.replace(path,quarantine/path.name)
+                self._deferred.pop(path,None)
+                continue
+            if frames<=threshold:
+                self._deferred[path]=fingerprint
+                continue
+            self._deferred.pop(path,None)
+            selected+=1
+            yield path,payload
+            if selected>=limit:break
+        # Entries not encountered after the eligible limit may still exist.
+        self._deferred={path:value for path,value in self._deferred.items()if path in existing or path.exists()}
 
     def close(self):
         deadline = time.monotonic() + 4
@@ -241,7 +278,8 @@ class CloudRelay:
             self.thread.join(timeout=1)
 
     def _post(self, path, payload):
-        return http_json(self.config["server_url"], path, payload, self.config["device_token"])
+        send = self.transport or http_json
+        return send(self.config["server_url"], path, payload, self.config["device_token"])
 
     def _run(self):
         heartbeat_due = 0.0
@@ -257,7 +295,7 @@ class CloudRelay:
                     pending = len(list((self.directory / "outbox").glob("*.json")))
                     response = self._post("/api/device/heartbeat", {**self.health(), "outbox_pending": pending,
                         "clock_synced": datetime.datetime.now().year >= 2024,
-                        "firmware": "poseguard-1.3.0"})
+                        "firmware": "poseguard-1.6.0"})
                     if response.get("rules"):
                         self.config["rules"] = response["rules"]
                         atomic_json(self.directory / "policy.json", response["rules"])
@@ -270,14 +308,7 @@ class CloudRelay:
                                 "cloud_incident_id": command.get("incident_id"), "details": json.loads(command["payload_json"])})
                         self._post("/api/device/commands/" + command["id"] + "/ack", {})
                     heartbeat_due = timestamp + max(10, self.config.get("rules", {}).get("heartbeat_seconds", 30))
-                for path in sorted((self.directory / "outbox").glob("*.json"))[:12]:
-                    try:
-                        payload = json.loads(path.read_text(encoding="utf-8"))
-                    except (ValueError, OSError):
-                        quarantine = self.directory / "rejected"
-                        quarantine.mkdir(exist_ok=True)
-                        os.replace(path, quarantine / path.name)
-                        continue
+                for path,payload in self.pending_payloads():
                     response = self._post("/api/device/events", payload)
                     if not response.get("accepted"):
                         raise RuntimeError("server did not accept incident")
@@ -305,7 +336,7 @@ def main():
     parser.add_argument("command",choices=["enroll","relay"])
     parser.add_argument("--server",default="https://poseguard.nanaoni.tech")
     parser.add_argument("--code")
-    parser.add_argument("--platform",choices=["windows","maixcam"],default="windows")
+    parser.add_argument("--platform",choices=["windows","linux","maixcam"],default="windows")
     parser.add_argument("--config",required=True)
     args=parser.parse_args()
     if args.command=="enroll":

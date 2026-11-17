@@ -14,8 +14,9 @@ except ImportError:
 
 
 class PreviewPublisher:
-    def __init__(self, config, encode, copy_frame):
+    def __init__(self, config, encode, copy_frame,connect=None):
         self.config, self.encode, self.copy_frame = config, encode, copy_frame
+        self.connect=connect
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
         self.thread = None
@@ -32,6 +33,7 @@ class PreviewPublisher:
         self.mirror = False
         self.epoch = uuid.uuid4().hex
         self.last_error = ''
+        self.failure_hook = None
 
     def start(self):
         import websocket  # Optional feature; install websocket-client first.
@@ -71,7 +73,8 @@ class PreviewPublisher:
         meta = dict(sequence=sequence, source_epoch=epoch, codec='jpeg', keyframe=True,
                     captured_ms=int(time.time()*1000), inference_fps=max(0, float(fps)),
                     detector_ready=True, source_type=source_type, orientation=rotation,
-                    mirrored=mirror, camera_applied_version=camera['version'])
+                    mirrored=mirror, camera_applied_version=camera['version'],is_test=bool(self.config.get('is_test',False)),
+                    keypoint_confidence_kind=self.config.get('keypoint_confidence_kind','model'))
         with self.lock:
             if now < self.lease:
                 self.pending = (image, tracks, decisions, meta, profile)
@@ -96,11 +99,12 @@ class PreviewPublisher:
             people.append(dict(id=int(get(track,'track_id')), bbox=[box[0]/width, box[1]/height, box[2]/width, box[3]/height],
                                keypoints=keypoints, confirmed=bool(get(track,'confirmed',True)), predicted=bool(get(track,'predicted',False))))
         risks = []
+        fresh={p['id']for p in people if p['confirmed']and not p['predicted']}
         for decision in decisions[:24]:
             kind = get(decision, 'kind', get(decision,'risk'))
             state = get(decision, 'state')
             kind, state = getattr(kind,'value',kind), getattr(state,'value',state)
-            if kind in ('phone_to_ear','multi_person','lingering') and state in ('candidate','alert'):
+            if kind in ('phone_to_ear','multi_person','lingering') and state in ('candidate','alert') and int(get(decision,'track_id'))in fresh:
                 risks.append(dict(id=int(get(decision,'track_id')),kind=kind,state=state))
         meta = dict(meta, width=width, height=height, tracks=people, risks=risks,
                     people=sum(not p['predicted'] and p['confirmed'] for p in people))
@@ -118,13 +122,22 @@ class PreviewPublisher:
             try:
                 server = self.config['server_url'].rstrip('/')
                 address = server.replace('https://','wss://',1).replace('http://','ws://',1)
-                ws = websocket.create_connection(address+'/api/device/preview/connect',
+                factory=self.connect or websocket.create_connection
+                ws = factory(address+'/api/device/preview/connect',
                     header=['Authorization: Bearer '+self.config['device_token']],origin=server,
                     timeout=8,enable_multithread=True)
-                ws.settimeout(.08)
-                ws.send(json.dumps(dict(type='hello',codecs=['jpeg'],pose=True,camera=True)))
+                # Change the receive timeout only while polling. Control and
+                # frame writes need a bounded but independent TLS timeout.
+                ws.settimeout(2)
+                ws.send(json.dumps(dict(type='hello', codecs=['jpeg'], pose=True, camera=True,
+                    low_resource=self.config.get('low_resource_preview') is True,
+                    frame_ack=True, max_inflight_frames=12)))
+                ws.settimeout(.015)
                 retry = 1
                 applied, ping = -2, time.monotonic()
+                in_flight = {}
+                window = 1
+                uses_credit = False
                 while not self.stop_event.is_set():
                     try:
                         message = ws.recv()
@@ -133,25 +146,37 @@ class PreviewPublisher:
                         if isinstance(message,str):
                             if len(message)>8192: raise ValueError('Preview control too large')
                             control = json.loads(message)
+                            if control.get('type') == 'frame_ack':
+                                in_flight.pop((control.get('epoch'), control.get('sequence')), None)
                             if control.get('type')=='control':
+                                uses_credit = 'source_window' in control
+                                if not uses_credit:
+                                    in_flight.clear()
+                                window = min(12, max(1, int(control.get('source_window', 1))))
                                 camera = control['camera']
                                 if str(camera['rotation']) not in ('auto','0','90','180','270'):
                                     raise ValueError('Invalid camera direction')
                                 with self.lock:
                                     self.settings = dict(rotation=str(camera['rotation']),mirror=bool(camera['mirror']),version=int(camera['version']))
                                     self.lease = time.monotonic()+min(10000,max(0,control.get('lease_ms',8000)))/1000 if control.get('active') else 0
-                                    self.profile = dict(fps=min(10,max(1,control['fps'])),long_side=min(960,max(240,control['long_side'])),quality=min(85,max(25,control['quality'])))
+                                    self.profile = dict(fps=min(20,max(1,control['fps'])),long_side=min(960,max(240,control['long_side'])),quality=min(85,max(25,control['quality'])))
                                     if not control.get('active'): self.pending = None
                                 if not self.camera_path.exists() or self.settings != getattr(self,'saved',None):
                                     atomic_json(self.camera_path,self.settings,private=True)
                                     self.saved = dict(self.settings)
                     except (websocket.WebSocketTimeoutException, socket.timeout):
                         pass
+                    if in_flight and time.monotonic() - min(in_flight.values()) > 8:
+                        raise TimeoutError('Cloud did not acknowledge the source frame')
                     with self.lock:
-                        item, self.pending = self.pending, None
+                        item = None
+                        if len(in_flight) < window:
+                            item, self.pending = self.pending, None
                         version, lease = self.applied, self.lease
-                    if version != applied:
+                    if version >= 0 and version != applied:
+                        ws.settimeout(2)
                         ws.send(json.dumps(dict(type='applied',version=version)))
+                        ws.settimeout(.015)
                         applied = version
                     if item and time.monotonic() < lease:
                         image, tracks, decisions, meta, profile = item
@@ -163,12 +188,19 @@ class PreviewPublisher:
                         encoded = json.dumps(scaled,separators=(',',':')).encode()
                         ws.settimeout(2)
                         ws.send_binary(b'PGV1'+struct.pack('>I',len(encoded))+encoded+payload)
-                        ws.settimeout(.08)
+                        if uses_credit:
+                            in_flight[(meta['source_epoch'], meta['sequence'])] = time.monotonic()
+                        ws.settimeout(.015)
                     if time.monotonic()-ping > 25:
-                        ws.ping(); ping=time.monotonic()
+                        ws.settimeout(2)
+                        ws.ping()
+                        ws.settimeout(.015)
+                        ping=time.monotonic()
                     self.last_error = ''
             except Exception as error:
                 self.last_error = type(error).__name__
+                if ws and self.failure_hook:
+                    self.failure_hook(ws)
             finally:
                 with self.lock:
                     self.lease = 0

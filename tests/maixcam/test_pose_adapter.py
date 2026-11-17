@@ -71,3 +71,16 @@ def test_keeps_separate_people():
     )
 
     assert len(result) == 2
+
+
+def test_large_confident_upper_body_does_not_require_hidden_hips():
+    values=[-1,-1]*17
+    visible={0:(150,40),1:(140,35),2:(160,35),3:(130,45),4:(170,45),5:(80,90),6:(220,90),7:(60,140),8:(240,140),9:(130,55),10:(250,185)}
+    for index,point in visible.items():values[index*2:index*2+2]=point
+    result=adapt_objects([make_object(values,score=.92,x=0,y=0,w=320,h=224)],(320,224))
+    assert len(result)==1
+
+
+def test_large_low_confidence_or_collapsed_points_still_fail_quality():
+    values=visible_points()
+    assert adapt_objects([make_object(values,score=.9,x=0,y=0,w=320,h=224)],(320,224))==[]
