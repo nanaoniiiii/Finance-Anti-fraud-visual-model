@@ -51,6 +51,8 @@ import {
   X,
 } from 'lucide-react';
 import QRCode from 'qrcode';
+import PlatformManagement, { WorkspacePicker } from './PlatformManagement.jsx';
+import { stationEvidence } from '../shared/station-policy.js';
 import './style.css';
 import './message-popover.css';
 
@@ -58,6 +60,7 @@ const riskName = {
   phone_to_ear: '疑似通话姿态',
   multi_person: '多人进入',
   lingering: '长时间停留',
+  fraud_risk: '疑似诈骗综合风险',
 };
 const stateName = {
   open: '待确认',
@@ -73,8 +76,15 @@ const platformName = {
   esp32s3: 'ESP32-S3',
   android: '安卓手机',
   ios: 'iPhone',
+  speech: '语音检测',
+  transaction: '交易信号',
 };
 const levels = ['候选', '关注', '高风险', '紧急'];
+function stationEvidenceText(event) {
+  const value = event.evidence ?? event.evidence_json;
+  const codes = Array.isArray(value) ? value : parseJson(value);
+  return Array.isArray(codes) ? codes.map(code => stationEvidence[code]?.label).filter(Boolean).join('、') : '';
+}
 const timeFormat = (value) =>
   value
     ? new Intl.DateTimeFormat('zh-CN', {
@@ -395,7 +405,7 @@ function Login({ onDone, notice }) {
 const messageUi = { Button, Modal, PanelHeader, Badge, Empty };
 function pageFromPath() {
   const section = location.pathname.split('/')[1];
-  return ['devices', 'events', 'notifications', 'settings', 'team'].includes(section) ? section : 'overview';
+  return ['devices', 'events', 'notifications', 'settings', 'team', 'platform'].includes(section) ? section : 'overview';
 }
 function App() {
   const [user, setUser] = useState(undefined);
@@ -424,6 +434,20 @@ function App() {
   const [stats, setStats] = useState(null);
   const [settings, setSettings] = useState(null);
   const [config, setConfig] = useState(null);
+  const [workspaces, setWorkspaces] = useState([{ id: 'main', name: '主工作区' }]);
+  const [workspaceId, setWorkspaceId] = useState(() => localStorage.getItem('poseguard-workspace') || 'main');
+  const [platformRefresh, setPlatformRefresh] = useState(0);
+  const isEdge = config?.deployment === 'edge';
+  useEffect(() => {
+    if (!user || !config || isEdge) return undefined;
+    let current = true;
+    api('/workspaces').then(result => {
+      if (!current) return;
+      setWorkspaces(result.workspaces);
+      if (!result.workspaces.some(workspace => workspace.id === workspaceId)) setWorkspaceId('main');
+    }).catch(() => {});
+    return () => { current = false; };
+  }, [user?.id, config?.deployment, workspaceId]);
   const [toast, setToast] = useState('');
   const [testNotice, setTestNotice] = useState(null);
   const [modal, setModal] = useState(null);
@@ -640,6 +664,10 @@ function App() {
   }, [selectedEvent, events, user?.id]);
   function navigate(next, id = null) {
     if(next==='messages') {setMessageWindowOpen(true);setSelectedMessage(id);setMobileMenu(false);history.pushState({},'','/messages'+(id?'/'+id:''));return;}
+    if (!isEdge && ['overview','events','devices','notifications'].includes(next)) {
+      setWorkspaceId('main');
+      localStorage.setItem('poseguard-workspace', 'main');
+    }
     setMessageWindowOpen(false);
     setPage(next);
     setSelectedEvent(next === 'events' ? id : null);
@@ -655,6 +683,16 @@ function App() {
           : '/' + next
     );
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  function selectWorkspace(id) {
+    setWorkspaceId(id);
+    localStorage.setItem('poseguard-workspace', id);
+    navigate('platform');
+  }
+  async function addWorkspace(name) {
+    const { workspace } = await api('/workspaces', { method: 'POST', body: JSON.stringify({ name }) });
+    setWorkspaces(previous => [...previous, workspace]);
+    selectWorkspace(workspace.id);
   }
   function raisePopup(alert) {
     if(handlingEvent.current||(popupSnoozes.current[popupKey(alert)]||0)>Date.now())return;
@@ -799,6 +837,7 @@ function App() {
   );
   const pageTitles = {
     overview: '工作区总览',
+    platform: '平台管理',
     devices: '设备与绑定',
     events: '事件中心',
     notifications: '通知与成员',
@@ -807,11 +846,15 @@ function App() {
   };
   const nav = [
     ['overview', Grid2X2, '工作区总览'],
-    ['devices', Monitor, '设备与绑定'],
-    ['events', Activity, '事件中心'],
-    ['notifications', Bell, '通知与成员'],
+    ...(isEdge ? [
+      ['devices', Monitor, '设备与绑定'],
+      ['events', Activity, '事件中心'],
+      ['notifications', Bell, '通知与成员'],
+    ] : [['platform', Monitor, '平台管理']]),
     ['settings', Settings, '系统设置'],
   ];
+  const workspace = workspaces.find(item => item.id === (page === 'platform' ? workspaceId : 'main')) || workspaces[0];
+  const inPlatform = !isEdge && ['platform', 'events', 'devices', 'notifications'].includes(page);
   return (
     <div className="app-shell">
       <aside className={`sidebar ${mobileMenu ? 'visible' : ''}`}>
@@ -827,17 +870,17 @@ function App() {
             <ShieldCheck />
           </span>
           <span>
-            PoseGuard<small>多端云预警中心</small>
+            PoseGuard<small>{isEdge ? '网点边端预警中心' : '多端云预警中心'}</small>
           </span>
         </a>
-        <div className="workspace-label">
-          <span className="status-dot" /> 主工作区 <ChevronDown size={13} />
-        </div>
+        {isEdge ? <div className="workspace-label"><span className="status-dot" /> 网点边端</div> :
+          <WorkspacePicker workspace={workspace} workspaces={workspaces} canCreate={user.role === 'owner'}
+            onSelect={selectWorkspace} onCreate={addWorkspace} />}
         <nav>
           {nav.map(([key, Icon, label]) => (
             <button
               key={key}
-              className={page === key ? 'active' : ''}
+              className={page === key || (key === 'platform' && inPlatform) ? 'active' : ''}
               onClick={() => navigate(key)}
             >
               <Icon size={19} />
@@ -882,7 +925,7 @@ function App() {
             >
               <Menu size={22} />
             </button>
-            <span>云端管理</span>
+            <span>{isEdge ? '边端管理' : inPlatform ? workspace.name : '云端管理'}</span>
             <ChevronRight size={14} />
             <b>{pageTitles[page]}</b>
           </div>
@@ -909,14 +952,16 @@ function App() {
         <div className="content">
           <div className="page-heading">
             <div>
-              <div className="eyebrow">
+              {!inPlatform && <div className="eyebrow">
                 {page === 'overview'
                   ? 'MONITOR / RESPOND / RESOLVE'
                   : 'POSEGUARD WORKSPACE'}
-              </div>
+              </div>}
               <h1>{pageTitles[page]}</h1>
               <p>
-                {page === 'overview'
+                {page === 'platform'
+                  ? `${workspace.name} · 查看归档事件、风险分布、设备与人员。`
+                  : page === 'overview'
                   ? '连接每一台设备，及时跟进每一次预警。'
                   : page === 'devices'
                     ? '绑定终端、查看在线状态，并管理手机接收端。'
@@ -930,10 +975,10 @@ function App() {
               </p>
             </div>
             <div className="heading-actions">
-              <Button icon={RefreshCw} onClick={reload}>
+              <Button icon={RefreshCw} onClick={page === 'platform' ? () => setPlatformRefresh(value => value + 1) : reload}>
                 刷新
               </Button>
-              {user.role === 'owner' && page !== 'messages' && (
+              {user.role === 'owner' && !['messages','platform'].includes(page) && (
                 <Button
                   icon={Plus}
                   kind="primary"
@@ -951,6 +996,10 @@ function App() {
               <Button onClick={reload}>重试</Button>
             </div>
           )}
+
+          {page === 'platform' && !isEdge && <PlatformManagement key={workspace.id} workspace={workspace}
+            user={user} api={api} refreshKey={platformRefresh}
+            onLegacy={section => { setWorkspaceId('main'); navigate({ event:'events', device:'devices', staff:'notifications' }[section]); }} />}
 
           {page === 'overview' && (
             <>
@@ -1326,9 +1375,14 @@ function App() {
                       />
                       <dl className="facts">
                         <div>
-                          <dt>累计特殊状态</dt>
-                          <dd>{detail.event.observed_frames} 帧</dd>
+                          <dt>{detail.event.risk_kind === 'fraud_risk' ? '边端融合评分' : '累计特殊状态'}</dt>
+                          <dd>{detail.event.risk_kind === 'fraud_risk'
+                            ? `${detail.event.risk_score ?? '—'} / 100` : `${detail.event.observed_frames} 帧`}</dd>
                         </div>
+                        {detail.event.risk_kind === 'fraud_risk' && <div>
+                          <dt>边端识别证据</dt>
+                          <dd>{stationEvidenceText(detail.event) || '—'}</dd>
+                        </div>}
                         <div>
                           <dt>模型状态</dt>
                           <dd>
@@ -1748,10 +1802,11 @@ function App() {
         />
       )}
       {modal === 'bind' && (
-        <BindModal onClose={() => setModal(null)} notify={notify} />
+        <BindModal onClose={() => setModal(null)} notify={notify} edge={isEdge} />
       )}
       {modal?.type === 'device' && (
         <DeviceModal
+          edge={isEdge}
           device={modal.device}
           user={user}
           onClose={() => setModal(null)}
@@ -1800,10 +1855,14 @@ function App() {
             </Badge>
             <h2>{urgent.personal ? urgent.title : riskName[urgent.risk_kind]}</h2>
             <p>
-              {urgent.personal ? `发出人：${urgent.sender_name} · 区域：${urgent.area || '见消息详情'}` : `${urgent.device_name} · 累计 ${urgent.observed_frames} 帧特殊状态`}
+              {urgent.personal ? `发出人：${urgent.sender_name} · 区域：${urgent.area || '见消息详情'}` :
+                urgent.risk_kind === 'fraud_risk' ? `${urgent.device_name} · 综合风险 ${urgent.risk_score ?? '—'} / 100` :
+                  `${urgent.device_name} · 累计 ${urgent.observed_frames} 帧特殊状态`}
             </p>
             <p className="muted">
-              {urgent.personal ? urgent.body : urgent.signal_ended_at ? '检测状态已恢复，事件仍待人工核查与处置；尚未提交人工处理记录。' : urgent.model_state === 'candidate'
+              {urgent.personal ? urgent.body : urgent.risk_kind === 'fraud_risk' ?
+                (stationEvidenceText(urgent) || '边端发现风险信号，请现场核查。') :
+                urgent.signal_ended_at ? '检测状态已恢复，事件仍待人工核查与处置；尚未提交人工处理记录。' : urgent.model_state === 'candidate'
                 ? '候选状态累计触发，请结合现场情况核查。'
                 : '检测到持续特殊姿态，请工作人员及时关注。'}
             </p>
@@ -2041,7 +2100,7 @@ function EventTable({ events, onOpen }) {
               <b>{riskName[e.risk_kind]}</b>
               <small>
                 {e.device_name} · {platformName[e.platform]} ·{' '}
-                {e.observed_frames} 帧
+                {e.risk_kind === 'fraud_risk' ? '边端融合' : `${e.observed_frames} 帧`}
               </small>
             </div>
           </div>
@@ -2069,7 +2128,7 @@ function parseJson(value) {
   }
 }
 
-function BindModal({ onClose, notify }) {
+function BindModal({ onClose, notify, edge }) {
   const [name, setName] = useState('');
   const [platform, setPlatform] = useState('rk3566');
   const [result, setResult] = useState(null);
@@ -2150,7 +2209,7 @@ function BindModal({ onClose, notify }) {
                 value={platform}
                 onChange={(e) => setPlatform(e.target.value)}
               >
-                {['windows', 'linux', 'rk3566', 'maixcam', 'esp32s3'].map((p) => (
+                {['windows', 'linux', 'rk3566', 'maixcam', 'esp32s3', ...(edge ? ['speech','transaction'] : [])].map((p) => (
                   <option key={p} value={p}>
                     {platformName[p]}
                   </option>
@@ -2175,9 +2234,10 @@ function BindModal({ onClose, notify }) {
     </Modal>
   );
 }
-function DeviceModal({ device, user, onClose, onSave, notify, onPreview }) {
+function DeviceModal({ device, user, onClose, onSave, notify, onPreview, edge }) {
   const [name, setName] = useState(device.name);
   const [location, setLocation] = useState(device.location);
+  const [group, setGroup] = useState(device.config?.fusion_group || '');
   const [busy, setBusy] = useState(false);
   return (
     <Modal title="设备详情" onClose={onClose}>
@@ -2194,9 +2254,9 @@ function DeviceModal({ device, user, onClose, onSave, notify, onPreview }) {
             </p>
           </div>
         </div>
-        <div className="modal-actions">
+        {device.health?.capabilities?.preview && <div className="modal-actions">
           <Button onClick={onPreview}><Eye size={16} />实时画面与方向设置</Button>
-        </div>
+        </div>}
         <dl className="facts">
           <div>
             <dt>最近心跳</dt>
@@ -2222,7 +2282,7 @@ function DeviceModal({ device, user, onClose, onSave, notify, onPreview }) {
             try {
               await api('/devices/' + device.id, {
                 method: 'PATCH',
-                body: JSON.stringify({ name, location }),
+                body: JSON.stringify({ name, location, ...(edge ? { fusion_group: group.trim() } : {}) }),
               });
               notify('设备设置已同步');
               onSave();
@@ -2253,6 +2313,11 @@ function DeviceModal({ device, user, onClose, onSave, notify, onPreview }) {
               disabled={user.role !== 'owner'}
             />
           </label>
+          {edge && <label>
+            融合检测点编号
+            <input value={group} onChange={event => setGroup(event.target.value)} pattern="[a-zA-Z0-9_-]{0,32}"
+              maxLength={32} placeholder="例如 ATM-01，同一检测点使用相同编号" disabled={user.role !== 'owner'} />
+          </label>}
           {device.health.last_error && (
             <div className="form-message">{device.health.last_error}</div>
           )}

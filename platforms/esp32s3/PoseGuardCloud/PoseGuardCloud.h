@@ -23,20 +23,24 @@
 // S3Pipeline; generic adapters can supply observations from their own detector.
 class PoseGuardCloud {
  public:
-  bool begin(const char* server, const char* rootCA) {
+  bool begin(const char* server, const char* rootCA, const char* stationStorage = nullptr) {
     server_ = server;
     ca_ = rootCA;
     if (!server_.startsWith("https://")) return false;
     lock_ = xSemaphoreCreateMutex();
     transportLock_ = xSemaphoreCreateMutex();
     if (!lock_ || !transportLock_ || !LittleFS.begin(false)) return false;
-    store_.begin("poseguard", false);
+    if (!store_.begin(stationStorage ? stationStorage : "poseguard", false)) return false;
+    if (stationStorage) {
+      prefix_ = String("/") + stationStorage;
+      LittleFS.mkdir(prefix_);
+    }
     token_ = store_.getString("token");
     device_ = store_.getString("device");
     session_ = randomID();
-    LittleFS.mkdir("/outbox");
-    LittleFS.mkdir("/evidence");
-    LittleFS.mkdir("/commands");
+    LittleFS.mkdir(prefix_ + "/outbox");
+    LittleFS.mkdir(prefix_ + "/evidence");
+    LittleFS.mkdir(prefix_ + "/commands");
     return true;
   }
   bool bind(const String& code) {
@@ -174,7 +178,7 @@ class PoseGuardCloud {
       }
       for (JsonObject command : response["pending_commands"].as<JsonArray>()) {
         String id = command["id"];
-        String path = "/commands/" + id + ".json";
+        String path = prefix_ + "/commands/" + id + ".json";
         {
           Guard guard(lock_);
           if (!LittleFS.exists(path)) {
@@ -182,7 +186,7 @@ class PoseGuardCloud {
             if (!f || serializeJson(command, f) == 0) return;
             f.flush();
             f.close();
-            File log = LittleFS.open("/interventions.jsonl", "a");
+            File log = LittleFS.open(prefix_ + "/interventions.jsonl", "a");
             if (!log) return;
             serializeJson(command, log);
             log.println();
@@ -202,17 +206,18 @@ class PoseGuardCloud {
     {
       Guard guard(lock_);
       generation=queueRevision_.load();threshold=counts_.policy.threshold;
-      File directory = LittleFS.open("/outbox");
+      File directory = LittleFS.open(prefix_ + "/outbox");
       File item = directory.openNextFile();
       while (item) {
         String candidate = item.name();
-        if(!item.isDirectory()&&candidate.endsWith(".json"))candidates.push_back(candidate);
+        if(!item.isDirectory()&&candidate.endsWith(".json"))
+          candidates.push_back(candidate.substring(candidate.lastIndexOf('/') + 1));
         item = directory.openNextFile();
       }
     }
     std::sort(candidates.begin(),candidates.end());
     for(const auto& candidate:candidates) {
-      File item=LittleFS.open(candidate.startsWith("/")?candidate:"/outbox/"+candidate,"r");
+      File item=LittleFS.open(prefix_ + "/outbox/" + candidate,"r");
       JsonDocument metadata;
       if(readStoredJson(item,metadata,true)&&(metadata["observed_frames"]|0U)>threshold) {
         file=candidate;break;
@@ -223,7 +228,7 @@ class PoseGuardCloud {
       queueScanAfter_=queueRevision_.load()==generation?millis()+30000:0;
       return;
     }
-    String path = file.startsWith("/") ? file : "/outbox/" + file;
+    String path = prefix_ + "/outbox/" + file;
     JsonDocument payload, response;
     File pending=LittleFS.open(path,"r");
     if(!readStoredJson(pending,payload))return;
@@ -231,7 +236,7 @@ class PoseGuardCloud {
     if (post("/api/device/events", payload, response) &&
         response["accepted"] == true) {
       Guard guard(lock_);
-      File receipt = LittleFS.open("/receipts.jsonl", "a");
+      File receipt = LittleFS.open(prefix_ + "/receipts.jsonl", "a");
       if (!receipt) return;
       JsonDocument row;
       row["event_id"] = payload["event_id"];
@@ -260,7 +265,7 @@ class PoseGuardCloud {
   Preferences store_;
   SemaphoreHandle_t lock_{};
   SemaphoreHandle_t transportLock_{};
-  String server_, token_, device_, session_, mode_{"transport_ready"};
+  String server_, token_, device_, session_, prefix_, mode_{"transport_ready"};
   const char* ca_{};
   float fps_{};
   int people_{};
@@ -291,7 +296,7 @@ class PoseGuardCloud {
   }
   uint32_t pendingCountUnlocked() const {
     uint32_t count=0;
-    File directory=LittleFS.open("/outbox");
+    File directory=LittleFS.open(prefix_ + "/outbox");
     for(File file=directory.openNextFile();file;file=directory.openNextFile())
       if(!file.isDirectory()&&String(file.name()).endsWith(".json"))++count;
     return count;
@@ -333,7 +338,7 @@ class PoseGuardCloud {
     JsonDocument doc;
     fields(doc, c);
     doc["action"] = action;
-    File file = LittleFS.open("/incidents.jsonl", "a");
+    File file = LittleFS.open(prefix_ + "/incidents.jsonl", "a");
     if (file) {
       serializeJson(doc, file);
       file.println();
@@ -347,7 +352,7 @@ class PoseGuardCloud {
     fields(doc, c);
     doc["update_type"] = type;
     if (jpeg && length > 0 && length <= 60000) {
-      String file = "/evidence/" + doc["event_id"].as<String>() + "-" +
+      String file = prefix_ + "/evidence/" + doc["event_id"].as<String>() + "-" +
                     String(c.revision) + ".jpg";
       File image = LittleFS.open(file, "w");
       if (image) {
@@ -370,7 +375,7 @@ class PoseGuardCloud {
     char revision[16];
     snprintf(revision, sizeof revision, "-r%06lu", (unsigned long)c.revision);
     String file =
-        "/outbox/" + doc["event_id"].as<String>() + revision + ".json";
+        prefix_ + "/outbox/" + doc["event_id"].as<String>() + revision + ".json";
     String temporary = file + ".new";
     File out = LittleFS.open(temporary, "w");
     if (!out) return false;

@@ -2,6 +2,10 @@
 __pycache__/
 .pytest_cache/
 .secrets/
+**/station-data/
+**/station-secrets.json
+**/station.local.json
+**/runtime.private.env
 node_modules/
 cloud/poseguard-hub/dist/
 cloud/poseguard-hub/.wrangler/
@@ -29,3 +33,5 @@ platforms/rk3566/media/*.avi
 
 # 本地软件著作权申请材料包含提交文档、截图和审计记录，不纳入公开仓库。
 软件著作权申请资料/
+**/StationTarget.h
+cloud/poseguard-hub/edge/.wrangler/

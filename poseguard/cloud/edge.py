@@ -336,7 +336,7 @@ def main():
     parser.add_argument("command",choices=["enroll","relay"])
     parser.add_argument("--server",default="https://poseguard.nanaoni.tech")
     parser.add_argument("--code")
-    parser.add_argument("--platform",choices=["windows","linux","maixcam"],default="windows")
+    parser.add_argument("--platform",choices=["windows","linux","maixcam","speech","transaction"],default="windows")
     parser.add_argument("--config",required=True)
     args=parser.parse_args()
     if args.command=="enroll":

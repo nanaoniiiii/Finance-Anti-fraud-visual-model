@@ -62,6 +62,8 @@ import { dispositionRoute } from './dispositions.js';
 import { pendingAlertRoute } from './pending-alerts.js';
 import { networkHints } from './network-hints.js';
 import {noteReadQuota,readQuotaResponse,persistReadQuota,offlineChecksAllowed,notificationTotals} from './db-budget.js';
+import { archiveIngress, workspaceRoute } from './workspaces.js';
+import { acceptStationSignal, forwardVision, fusionGroup, processStationRoom, stationMaintenance } from './station-fusion.js';
 export { PreviewRoom } from './preview-room.js';
 
 const list = async (statement) => (await statement.all()).results;
@@ -110,6 +112,17 @@ async function publicSettings(env) {
 export class EventRoom extends DurableObject {
   async fetch(request) {
     const url = new URL(request.url);
+    if (url.pathname === '/internal/fusion' && request.method === 'POST') {
+      try {
+        return await this.ctx.blockConcurrencyWhile(() => processStationRoom(
+          request, this.env, (device, input, decision) => receiveEvent(request, this.env, device, input, this.ctx, decision),
+        ));
+      } catch (error) {
+        if (error instanceof ApiError) return json({ error: error.message }, error.status);
+        console.error('station_fusion_failed', String(error.message).slice(0, 120));
+        return json({ error: '边端融合暂时不可用' }, 503);
+      }
+    }
     if (url.pathname === '/internal/db-budget') {
       if (request.method === 'POST') {
         const value = await request.json();
@@ -207,9 +220,13 @@ async function claimDevice(request, env, input) {
       )
     );
   }
-  const result = await env.DB.batch(statements);
-  if (result[0].meta.changes !== 1 || result[1].meta.changes !== 1)
-    throw new ApiError(409, '绑定码已使用');
+  await env.DB.batch(statements);
+  // The station outbox triggers also write rows. Check the committed token
+  // instead of using D1's aggregate changed-row count as a claim receipt.
+  const boundDevice = await env.DB.prepare(
+    'SELECT is_test FROM devices WHERE id=? AND token_hash=?'
+  ).bind(id, tokenHash).first();
+  if (!boundDevice) throw new ApiError(409, '绑定码已使用');
   await audit(env, 'device:' + id, 'device_bound', id, {
     platform: enrollment.platform,
   });
@@ -218,9 +235,6 @@ async function claimDevice(request, env, input) {
     name: enrollment.name,
     platform: enrollment.platform,
   });
-  const boundDevice = await env.DB.prepare(
-    'SELECT is_test FROM devices WHERE id=?'
-  ).bind(id).first();
   return json(
     {
       device_id: id,
@@ -235,21 +249,21 @@ async function claimDevice(request, env, input) {
   );
 }
 
-async function receiveEvent(request, env, device, input, ctx) {
+async function receiveEvent(request, env, device, input, ctx, stationDecision = null) {
   await rateLimit(env, 'event:' + device.id, 120, 60);
   const clientId = identifier(input.event_id);
   const revision = integer(input.revision, 1, 1000000);
   const frames = integer(input.observed_frames, 0, 1000000000);
   if (
-    !risks.has(input.risk_kind) ||
+    !(stationDecision ? input.risk_kind === 'fraud_risk' : risks.has(input.risk_kind)) ||
     !['candidate', 'alert'].includes(input.model_state) ||
     !['created', 'escalated', 'resolved', 'interrupted'].includes(
       input.update_type
     )
   )
     throw new ApiError(400, '事件类型不正确');
-  const rules = await rulesFor(env, device);
-  if (frames <= rules.frame_threshold)
+  const rules = stationDecision ? null : await rulesFor(env, device);
+  if (!stationDecision && frames <= rules.frame_threshold)
     throw new ApiError(422, '未超过累计帧阈值');
   const existing = await env.DB.prepare(
     'SELECT * FROM incidents WHERE device_id=? AND client_event_id=?'
@@ -278,7 +292,7 @@ async function receiveEvent(request, env, device, input, ctx) {
   const ended = ['resolved', 'interrupted'].includes(input.update_type);
   const modelSeverity = Math.max(
     existing?.automatic_severity || 0,
-    severityFor(frames, input.model_state, input.confirmed_seen === true, rules)
+    stationDecision?.level ?? severityFor(frames, input.model_state, input.confirmed_seen === true, rules)
   );
   const severity = Math.max(existing?.severity || 0,modelSeverity);
   const shouldNotify =
@@ -300,6 +314,7 @@ async function receiveEvent(request, env, device, input, ctx) {
     notification_severity: modelSeverity,
     status,
     observed_frames: frames,
+    ...(stationDecision ? { risk_score: stationDecision.score, evidence: stationDecision.evidence } : {}),
     occurred_at: occurred,
     received_at: time,
     notify: shouldNotify,
@@ -388,6 +403,9 @@ async function receiveEvent(request, env, device, input, ctx) {
         time
       )
     );
+  if (stationDecision)
+    statements.push(env.DB.prepare('UPDATE incidents SET risk_score=?,evidence_json=? WHERE id=? AND revision=?')
+      .bind(stationDecision.score, JSON.stringify(stationDecision.evidence), id, revision));
   statements.push(
     env.DB.prepare('UPDATE devices SET last_seen=? WHERE id=?').bind(
       time,
@@ -396,7 +414,7 @@ async function receiveEvent(request, env, device, input, ctx) {
   );
   try {
     const result = await env.DB.batch(statements);
-    if (existing && result[0].meta.changes !== 1)
+    if (existing && !result[0].meta.changes)
       return json({ accepted: true, duplicate: true, incident_id: id });
   } catch (error) {
     if (String(error).includes('UNIQUE')) {
@@ -442,11 +460,13 @@ async function route(request, env, ctx) {
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method;
+  if (path === '/api/workspaces/ingest') return archiveIngress(request, env);
   if (path === '/api/health')
     return json({
       ok: true,
       service: 'poseguard-hub',
-      version: '1.6.0',
+      version: '1.7.0',
+      deployment: env.DEPLOYMENT_MODE === 'edge' ? 'edge' : 'cloud',
       server_time: now(),
       network: await networkHints(env),
     });
@@ -458,6 +478,7 @@ async function route(request, env, ctx) {
       server_time: now(),
       app_url: '/downloads/PoseGuard-Android.apk',
       android_ready: !!env.ANDROID_CERT_SHA256,
+      deployment: env.DEPLOYMENT_MODE === 'edge' ? 'edge' : 'cloud',
     });
   if (path === '/api/auth/login' && method === 'POST') {
     const result = await login(request, env, await body(request, 8000));
@@ -532,8 +553,16 @@ async function route(request, env, ctx) {
         ),
       });
     }
-    if (path === '/api/device/events' && method === 'POST')
-      return receiveEvent(request, env, device, await body(request), ctx);
+    if (path === '/api/device/signals' && method === 'POST')
+      return acceptStationSignal(env, device, await body(request, 4000));
+    if (path === '/api/device/events' && method === 'POST') {
+      const input = await body(request);
+      const result = await receiveEvent(request, env, device, input, ctx);
+      if (result.ok && env.DEPLOYMENT_MODE === 'edge')
+        ctx.waitUntil(forwardVision(env, device, input).catch(() =>
+          console.error('station_vision_forward_failed')));
+      return result;
+    }
     const match = path.match(/^\/api\/device\/commands\/([^/]+)\/ack$/);
     if (match && method === 'POST') {
       const result = await env.DB.prepare(
@@ -547,6 +576,8 @@ async function route(request, env, ctx) {
   }
   if (path.startsWith('/api/mobile/')) return mobileRoute(request, env, url);
   const user = await userAuth(request, env);
+  const workspaceResponse = await workspaceRoute(request, env, user, url);
+  if (workspaceResponse) return workspaceResponse;
   if (path === '/api/pending-alerts' && method === 'GET') return pendingAlertRoute(env,user);
   const dispositionResponse = await dispositionRoute(request, env, user, url, ctx);
   if (dispositionResponse) return dispositionResponse;
@@ -679,6 +710,8 @@ async function route(request, env, ctx) {
     ownerOnly(user);
     const input = await body(request, 8000);
     if (!platforms.has(input.platform)) throw new ApiError(400, '平台不受支持');
+    if (env.DEPLOYMENT_MODE !== 'edge' && ['speech', 'transaction'].includes(input.platform))
+      throw new ApiError(400, '语音与交易信号源只能绑定网点边端');
     const name = text(input.name || '', 80);
     if (!name) throw new ApiError(400, '请填写设备名称');
     let target = null;
@@ -732,6 +765,10 @@ async function route(request, env, ctx) {
         .first();
       if (!current) throw new ApiError(404, '设备不存在');
       const config = { ...parse(current.config_json, {}) };
+      if (input.fusion_group !== undefined) {
+        if (env.DEPLOYMENT_MODE !== 'edge') throw new ApiError(400, '检测点分组由边端管理');
+        config.fusion_group = fusionGroup(input.fusion_group);
+      }
       if (input.rules) config.rules = validateRules(input.rules);
       await env.DB.prepare(
         'UPDATE devices SET name=?,location=?,config_json=? WHERE id=?'
@@ -1264,6 +1301,7 @@ export default {
   async scheduled(_event, env, ctx) {
     ctx.waitUntil(
       (async () => {
+        await stationMaintenance(env);
         if (await offlineChecksAllowed(env)) await checkOfflineDevices(env, ctx);
         await processJobs(env);
         const rules = await readSetting(env, 'rules', defaultRules);

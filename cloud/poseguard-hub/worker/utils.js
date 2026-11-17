@@ -15,12 +15,15 @@ export const platforms = new Set([
   'esp32s3',
   'android',
   'ios',
+  'speech',
+  'transaction',
 ]);
 export const risks = new Set(['phone_to_ear', 'multi_person', 'lingering']);
 export const riskLabels = {
   phone_to_ear: '疑似通话姿态',
   multi_person: '多人进入',
   lingering: '长时间停留',
+  fraud_risk: '疑似诈骗综合风险',
 };
 export const levelLabels = ['候选', '关注', '高风险', '紧急介入'];
 export const defaultRules = {

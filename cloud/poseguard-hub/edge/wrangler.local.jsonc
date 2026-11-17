@@ -1,0 +1,25 @@
+{
+  "name": "poseguard-workstation-local",
+  "main": "worker-entry.js",
+  "workers_dev": false,
+  "compatibility_date": "2026-11-14",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "../dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/__station_*", "/.well-known/*"]
+  },
+  "durable_objects": { "bindings": [
+    { "name": "ROOMS", "class_name": "EventRoom" },
+    { "name": "PREVIEWS", "class_name": "PreviewRoom" },
+    { "name": "MAIL_AUTH", "class_name": "AgentlyMailRoom" }
+  ] },
+  "migrations": [{ "tag": "station-v1", "new_sqlite_classes": ["EventRoom", "PreviewRoom", "AgentlyMailRoom"] }],
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "poseguard-station",
+    "database_id": "24615fbf-11e8-4c3e-9ff3-168aab0e771d",
+    "migrations_dir": "../migrations"
+  }]
+}

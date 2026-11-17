@@ -29,7 +29,14 @@ class NativePreviewSocket {
   }
   bool connect(const String& uri, const String& token, const char* ca) {
     uri_ = uri; token_ = token; ca_ = ca;
-    host_ = uri_.substring(6, uri_.indexOf('/', 6));
+    const int pathAt = uri_.indexOf('/', 6);
+    if (!uri_.startsWith("wss://") || pathAt <= 6) return false;
+    authority_ = uri_.substring(6, pathAt);
+    const int colon = authority_.indexOf(':');
+    host_ = colon < 0 ? authority_ : authority_.substring(0, colon);
+    const long port = colon < 0 ? 443L : authority_.substring(colon + 1).toInt();
+    if (host_.isEmpty() || port < 1 || port > 65535) return false;
+    port_ = static_cast<int>(port);
     if (serverWaitHost_==host_) {
       if (serverWaitUntil_ && int32_t(serverWaitUntil_-millis())>0) return false;
       serverWaitUntil_=0;serverWaitHost_="";
@@ -56,7 +63,6 @@ class NativePreviewSocket {
     headers_ = "Authorization: Bearer " + token + "\r\n";
     ca_ = ca;
     const int pathAt = uri_.indexOf('/', 6);
-    host_ = uri_.substring(6, pathAt);
     ssl_ = esp_transport_ssl_init();
     mapped_ = esp_transport_init();
     if (!ssl_ || !mapped_) return false;
@@ -143,7 +149,7 @@ class NativePreviewSocket {
         });
     websocket_ = esp_transport_ws_init(mapped_);
     if (!websocket_) return false;
-    esp_transport_set_default_port(websocket_, 443);
+    esp_transport_set_default_port(websocket_, port_);
     const String endpointPath = uri_.substring(pathAt);
     esp_transport_ws_config_t wsConfig{};
     wsConfig.ws_path = endpointPath.c_str();
@@ -155,7 +161,7 @@ class NativePreviewSocket {
     if (!mailbox_) return false;
     esp_websocket_client_config_t config{};
     config.uri = uri_.c_str();
-    config.port = 443;
+    config.port = port_;
     config.ext_transport = websocket_;
     config.headers = headers_.c_str();
     config.cert_pem = ca;
@@ -277,7 +283,8 @@ class NativePreviewSocket {
   const char* ca_{};
   QueueHandle_t mailbox_{};
   std::atomic<bool> connected_{false}, failed_{false};
-  String uri_, headers_, host_, token_, httpSession_;
+  String uri_, headers_, authority_, host_, token_, httpSession_;
+  int port_{443};
   IPAddress peer_;
   std::unique_ptr<HTTPClient> http_;
   std::unique_ptr<CloudTlsClient> httpTls_;
@@ -319,7 +326,7 @@ class NativePreviewSocket {
     // request is independent, as in the device's durable event uploader.
     http_->setReuse(false); http_->setConnectTimeout(5000); http_->setTimeout(8000);
     http_->useHTTP10(true);
-    const String endpoint = "https://" + host_ + "/api/device/preview/" + (bytes ? "frame" : "control");
+    const String endpoint = "https://" + authority_ + "/api/device/preview/" + (bytes ? "frame" : "control");
     if (!http_->begin(*httpTls_, endpoint)) {failed_ = true; return false;}
     http_->setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
     const char* retryHeaders[]={"Retry-After"};

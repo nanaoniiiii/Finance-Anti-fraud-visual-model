@@ -12,6 +12,13 @@
 #include "PoseGuardCloud.h"
 #include "RootCA.h"
 #include "CameraPreview.h"
+#if __has_include("StationTarget.h")
+#include "StationTarget.h"
+#else
+static constexpr auto POSEGUARD_ORIGIN = "https://poseguard.nanaoni.tech";
+static constexpr auto POSEGUARD_TRUSTED_CA = POSEGUARD_ROOT_CA;
+static constexpr const char* POSEGUARD_STORAGE = nullptr;
+#endif
 
 namespace {
 PoseGuardCloud cloud;
@@ -230,7 +237,7 @@ void setup() {
       configuredTxPower = WIFI_POWER_19_5dBm;
     settings.end();
   }
-  ready = cloud.begin("https://poseguard.nanaoni.tech", POSEGUARD_ROOT_CA);
+  ready = cloud.begin(POSEGUARD_ORIGIN, POSEGUARD_TRUSTED_CA, POSEGUARD_STORAGE);
   // Finish flash/storage setup before starting authentication with the AP.
   if (!configuredSsid.isEmpty())
     connectStoredNetwork(configuredSsid, configuredPassword,
@@ -238,7 +245,7 @@ void setup() {
   configTime(0, 0, "time.cloudflare.com", "pool.ntp.org", "ntp.aliyun.com");
   if (ready) xTaskCreate(networkTask, "pg-cloud", 16384, nullptr, 1, nullptr);
 #if defined(POSEGUARD_CAMERA_XIAO)
-  if (ready) cameraPreview.begin(cloud, POSEGUARD_ROOT_CA);
+  if (ready) cameraPreview.begin(cloud, POSEGUARD_TRUSTED_CA);
 #endif
   Serial.println(
       "PoseGuard ESP32-S3 1.6.0 "

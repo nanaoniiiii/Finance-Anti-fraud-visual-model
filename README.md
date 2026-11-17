@@ -4,6 +4,8 @@
 
 **1.6.0** 提供 Windows EXE、Linux 一键安装与 systemd 自启动包、MaixCAM 设备端安装包，以及在 XIAO ESP32-S3 Sense 芯片上运行的 YOLO11n-Pose INT8 固件。MaixCAM 已验证 USB 部署、板载 NPU 推理、屏幕显示和开机运行。ESP32 正式默认使用 192×192 网络输入，128×128 实验模型的实测数据和通用场景误报对比见验证报告。网页和安卓 App 的原始画面与姿态画面都可按需请求。[Windows/Linux](docs/PORTABLE.zh-CN.md) · [MaixCAM](docs/MAIXCAM.zh-CN.md) · [ESP32-S3](docs/ESP32S3.zh-CN.md) · [模型对比](docs/esp32s3-model-benchmarks.json)。
 
+**1.7.0 网点预览** 增加可本地运行的边端工作台。视觉、中文语音和交易证据在本网点融合，现场完成风险提醒与人工处置。云端按工作区归档并查看事件、风险分布、设备与人员。安装和联调方法见[网点边端与云端工作区](docs/STATION.zh-CN.md)。
+
 **1.3.1** 将邮件通知改为通用 SMTP 接入：独立配置服务器、端口、TLS/STARTTLS及认证方式，支持独立登录名和密码/授权码；网页与Android App同步更新。见[验证记录](docs/smtp-validation-2026-11-15.md)和[1.3.1更新包](https://github.com/nanaoniiiii/Finance-Anti-fraud-visual-model/releases/tag/poseguard-v1.3.1)。
 
 **1.4.1** 增加 Agent Mail 云端发信与授权续期，同时保留通用 SMTP。修复后台同步覆盖设置表单输入的问题：未保存的邮箱、通道、收件人、授权码及规则会保留，保存失败可继续修改。网页与 Android 同步更新。见[验证记录](docs/mail-settings-validation-2026-11-15.md)和[1.4.1 更新包](https://github.com/nanaoniiiii/Finance-Anti-fraud-visual-model/releases/tag/poseguard-v1.4.1)。

@@ -1,7 +1,7 @@
 import { ApiError, identifier, parse, readSetting } from './utils.js';
 
 export const policyKeys = [
-  ...['phone_to_ear', 'multi_person', 'lingering'].flatMap((risk) =>
+  ...['phone_to_ear', 'multi_person', 'lingering', 'fraud_risk'].flatMap((risk) =>
     [1, 2, 3].map((level) => `${risk}:${level}`),
   ),
   'device:online',

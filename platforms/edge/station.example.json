@@ -1,0 +1,9 @@
+{
+  "mode": "edge",
+  "listen": "127.0.0.1",
+  "port": 8790,
+  "origin": "http://127.0.0.1:8790",
+  "data_dir": "./station-data",
+  "admin_email": "admin@station.example",
+  "archive": null
+}

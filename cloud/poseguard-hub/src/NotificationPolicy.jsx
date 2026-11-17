@@ -5,6 +5,7 @@ const risks = [
   ['phone_to_ear', '疑似通话姿态'],
   ['multi_person', '多人进入'],
   ['lingering', '长时间停留'],
+  ['fraud_risk', '多模态综合风险'],
 ];
 const modes = [
   ['all', '全体成员'],
