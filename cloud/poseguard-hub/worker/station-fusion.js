@@ -7,6 +7,7 @@ const visualCodes = {
   multi_person: 'vision_multi_person',
   lingering: 'vision_lingering',
 };
+const visionClockLeadMs = 30_000;
 
 export function fusionGroup(value) {
   if (value === '') return '';
@@ -25,10 +26,10 @@ function scopeFor(device) {
   return device.is_test ? 'test:' + scope : scope;
 }
 
-function captureTime(value) {
+function captureTime(value, maxLeadMs = 5000) {
   const stamp = typeof value === 'string' ? Date.parse(value) : NaN;
   const stampNow = Date.now();
-  if (!Number.isFinite(stamp) || stamp < stampNow - stationWindowMs || stamp > stampNow + 5000)
+  if (!Number.isFinite(stamp) || stamp < stampNow - stationWindowMs || stamp > stampNow + maxLeadMs)
     throw new ApiError(422, '信号已过期，请校对设备与边端时间');
   return Math.min(stamp, stampNow);
 }
@@ -63,7 +64,9 @@ export async function forwardVision(env, device, input) {
       !Object.hasOwn(visualCodes, input.risk_kind) || !['created', 'escalated'].includes(input.update_type))
     return;
   let stamp;
-  try { stamp = captureTime(input.updated_at || input.occurred_at); } catch { return; }
+  // Legacy cameras use their own system clocks. Bound a modest future stamp
+  // to the edge receipt time before it enters the multimodal window.
+  try { stamp = captureTime(input.updated_at || input.occurred_at, visionClockLeadMs); } catch { return; }
   let snapshot;
   try { snapshot = validSnapshot(input.snapshot); } catch { /* The original event already has validation. */ }
   const response = await sendToRoom(env, device, {

@@ -41,6 +41,8 @@ python -m poseguard.speech_agent --model D:/PoseGuard/models/whisper-base --play
 
 边端融合采用当前检测点约 90 秒内的证据，同一证据类型重复出现仅保留最强观测。融合告警用于请求现场核查，人工作业的状态和时间随事件归档。转写依赖现场麦克风、噪声和说话方式。先在对应网点验证正常操作和异常样例，再启用日常采集。
 
+视觉终端短时比边端快至多 30 秒时，融合按边端接收时间计入该信号。超过融合窗口的历史视觉事件仍可归档。
+
 ## ESP32-S3 网点固件
 
 使用 [ESP32-S3 构建说明](../platforms/esp32s3/README.zh-CN.md) 中的 IDF 部署流程。在 `prepare_idf.py` 预备构建目录时增加 `--station-origin https://station.example:8790 --station-ca <网点 CA 的 PEM 文件>`。在网点设备页生成 ESP32-S3 绑定码，通过 USB 执行 `BIND`。同一设备的网点绑定、待传队列、截图和处置日志按网点地址保存到独立路径。保留原 NVS 和 LittleFS 分区即可用原固件继续使用原云端绑定。

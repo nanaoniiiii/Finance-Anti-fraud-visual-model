@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { combineStationSignals } from '../shared/station-policy.js';
+import { combineStationSignals, stationWindowMs } from '../shared/station-policy.js';
+import { forwardVision } from '../worker/station-fusion.js';
 import { calendar, sanitizeRecord } from '../worker/workspaces.js';
 
 test('ordinary call prompt cannot raise a warning and repeating an observation does not increase its score', () => {
@@ -9,6 +10,33 @@ test('ordinary call prompt cannot raise a warning and repeating an observation d
   assert.deepEqual(combineStationSignals([sample,sample,sample]), combineStationSignals([sample]));
   assert.equal(combineStationSignals([sample]).level, 2);
   assert.equal(combineStationSignals([sample,{code:'vision_phone',confidence:.95}]).level, 3);
+});
+
+test('edge fusion clamps a modest vision clock lead and excludes stale evidence', async () => {
+  const forwarded = [];
+  const env = {
+    DEPLOYMENT_MODE: 'edge',
+    ROOMS: {
+      idFromName: (name) => name,
+      get: () => ({ fetch: async (_url, init) => {
+        forwarded.push(JSON.parse(init.body));
+        return new Response(null, { status: 204 });
+      } }),
+    },
+  };
+  const device = { id: 'camera', is_test: 1, config_json: '{"fusion_group":"ATM-01"}' };
+  const event = { event_id: 'live', revision: 1, risk_kind: 'phone_to_ear', update_type: 'created' };
+  const receiptStart = Date.now();
+  await forwardVision(env, device, { ...event, updated_at: new Date(receiptStart + 11_300).toISOString() });
+  assert.equal(forwarded.length, 1);
+  assert.deepEqual(forwarded[0].codes, ['vision_phone']);
+  assert.equal(forwarded[0].scope, 'test:group:ATM-01');
+  assert.ok(forwarded[0].captured_at >= receiptStart && forwarded[0].captured_at <= Date.now());
+
+  for (const offset of [-stationWindowMs - 1000, 31_000]) {
+    await forwardVision(env, device, { ...event, updated_at: new Date(Date.now() + offset).toISOString() });
+  }
+  assert.equal(forwarded.length, 1);
 });
 
 test('Chinese local calendar handles leap months and midnight in UTC', () => {
