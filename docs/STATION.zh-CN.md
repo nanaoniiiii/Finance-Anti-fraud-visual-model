@@ -37,6 +37,14 @@ python -m poseguard.speech_agent --model D:/PoseGuard/models/whisper-base --play
 
 在边端生成「语音检测」绑定码后，可用 `python -m poseguard.cloud.edge enroll --platform speech --server <边端地址> --code <绑定码> --config <绑定文件>` 建立语音终端绑定。运行 `python -m poseguard.speech_agent --model <模型目录> --binding <绑定文件> --mic`，按需用 `--input-device` 选择麦克风。对照样例可用 `--wav` 输入文件，`--play-test` 会播放样例并从输入设备采样。测试输出只有证据编号、置信度和耗时。
 
+接入 MaixCAM 板载麦克风时，可在本网点通过已授权的 SSH 连接将原始 PCM 送给边端语音进程。以下命令使用 Linux Shell 或支持原生程序之间传输二进制管道的 PowerShell 7.4 及以上版本。示例中的 SSH 主机名、模型和绑定文件路径按各网点替换。 [MaixCAM 音频采集说明](https://wiki.sipeed.com/maixpy/doc/zh/audio/record.html) · [PowerShell 二进制管道说明](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_redirection#example-7-redirecting-binary-data-from-a-native-command)
+
+```bash
+ssh -T root@maixcam.local 'arecord -q -D hw:0,0 -c 1 -r 16000 -f S16_LE -t raw' | python -m poseguard.speech_agent --model ./whisper-base --binding ./speech-binding.json --pcm-stdin
+```
+
+MaixCAM 读取麦克风并向本网点传输音频流。边端在内存里分段并离线识别，后续归档传输风险证据类别。
+
 语音模型使用 Whisper Base 在本机以 CPU INT8 运行，后续可在本网点接入更完整的语言模型。首版关注索要或汇报验证码及密码、引导屏幕共享、要求转入所谓安全账户、冒充机构伴随威胁或保密要求。普通通话提示只作背景线索，带保护语义的安全提醒不会进入相应风险类别。交易系统可绑定为交易信号源并送入陌生收款方、短时重复转账等结构化证据。
 
 边端融合采用当前检测点约 90 秒内的证据，同一证据类型重复出现仅保留最强观测。融合告警用于请求现场核查，人工作业的状态和时间随事件归档。转写依赖现场麦克风、噪声和说话方式。先在对应网点验证正常操作和异常样例，再启用日常采集。

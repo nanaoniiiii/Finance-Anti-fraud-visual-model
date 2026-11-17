@@ -1,3 +1,9 @@
+import io
+import struct
+
+import pytest
+
+from poseguard.speech_agent import pcm_windows
 from poseguard.speech_risk import (
     AUTHORITY_PRESSURE, CALL_INDICATOR, CODE_REQUEST, REMOTE_CONTROL,
     SAFE_ACCOUNT, cues,
@@ -32,3 +38,13 @@ def test_observed_whisper_credential_homophones_keep_safe_context():
     assert cues("請把短信驗證馬念給我。") == [CODE_REQUEST]
     assert cues("請誤將驗證馬告訴任何人。") == []
     assert cues("先打開屏幕共享，再把錢轉到安全帳戶。") == [REMOTE_CONTROL, SAFE_ACCOUNT]
+
+
+def test_pcm_stream_decodes_little_endian_and_retains_last_complete_sample():
+    full_window = struct.pack("<h", 16384) * (16000 * 3)
+    windows = list(pcm_windows(io.BytesIO(full_window + struct.pack("<h", -32768)), 3))
+    assert [len(samples) for samples, _ in windows] == [48000, 1]
+    assert windows[0][0][0] == 0.5
+    assert windows[1][0][0] == -1.0
+    with pytest.raises(ValueError, match="middle of a sample"):
+        list(pcm_windows(io.BytesIO(b"\x01"), 3))

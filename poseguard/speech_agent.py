@@ -152,6 +152,17 @@ def listen(input_device, seconds):
             yield resample(samples, sample_rate), captured
 
 
+def pcm_windows(stream, seconds):
+    """Read signed 16-bit, little-endian mono PCM at 16 kHz."""
+    import numpy as np
+
+    window_bytes = round(seconds * 16000) * 2
+    while block := stream.read(window_bytes):
+        if len(block) % 2:
+            raise ValueError("PCM input ended in the middle of a sample")
+        yield np.frombuffer(block, dtype="<i2").astype("float32") / 32768, time.time()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True)
@@ -162,11 +173,14 @@ def main():
     parser.add_argument("--seconds", type=float, default=6)
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument("--mic", action="store_true")
+    modes.add_argument("--pcm-stdin", action="store_true", help="read 16 kHz mono signed 16-bit PCM from stdin")
     modes.add_argument("--wav", type=Path)
     modes.add_argument("--play-test", type=Path)
     args = parser.parse_args()
     if not 3 <= args.seconds <= 15 or not 1 <= args.threads <= 16:
         parser.error("Use a 3–15 second window and 1–16 CPU threads")
+    if args.pcm_stdin and sys.stdin.isatty():
+        parser.error("--pcm-stdin requires a binary PCM source connected to stdin")
     model = SpeechModel(args.model, args.threads)
     server, token = read_config(args.binding) if args.binding else (None, None)
 
@@ -194,7 +208,9 @@ def main():
         submit(str(args.wav), time.time(), {"capture_mode": "wav_file"})
     else:
         heartbeat_due = 0
-        for audio, captured in listen(args.input_device, args.seconds):
+        windows = pcm_windows(sys.stdin.buffer, args.seconds) if args.pcm_stdin else listen(args.input_device, args.seconds)
+        capture = {"capture_mode": "pcm_stream"} if args.pcm_stdin else None
+        for audio, captured in windows:
             if server and time.monotonic() >= heartbeat_due:
                 heartbeat_due = time.monotonic() + 30
                 try:
@@ -205,7 +221,7 @@ def main():
                 except (OSError, ValueError) as error:
                     print(f"Heartbeat: {type(error).__name__}", file=sys.stderr, flush=True)
             try:
-                submit(audio, captured)
+                submit(audio, captured, capture)
             except (OSError, ValueError) as error:
                 print(type(error).__name__, file=sys.stderr, flush=True)
 
