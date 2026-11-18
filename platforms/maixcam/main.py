@@ -141,6 +141,9 @@ def run(*, max_frames=0, no_display=False, test_timers=False, cloud_config=None,
     orientation = CameraOrientation()
     previous_direction = None
     cloud_health = {"mode": "starting", "fps": 0.0, "people": 0, "source": "MaixCAM camera"}
+    release = Path(__file__).with_name("VERSION")
+    if release.is_file():
+        cloud_health["firmware"] = "poseguard-" + release.read_text(encoding="utf-8").strip()
     try:
         from poseguard.cloud.edge import CloudRelay, IncidentMonitor
     except ImportError:

@@ -6,13 +6,22 @@ import importlib.util
 import time
 import traceback
 
-SETTINGS='/root/poseguard-data/maix/runtime.json'
+SETTINGS = "/root/poseguard-data/maix/runtime.json"
 
-def main():
-    with open(SETTINGS,'r',encoding='utf-8')as stream:settings=json.load(stream)
-    runtime=os.path.abspath(settings.get('runtime_directory','/root/poseguard-maix'))
-    if not os.path.isdir(runtime):raise RuntimeError('PoseGuard runtime is not installed')
-    directory=os.path.dirname(SETTINGS)
+def main(runtime_directory=None):
+    settings = {}
+    if os.path.isfile(SETTINGS):
+        with open(SETTINGS, "r", encoding="utf-8") as stream:
+            settings = json.load(stream)
+    runtime = os.path.abspath(runtime_directory or settings.get("runtime_directory", "/root/poseguard-maix"))
+    if not os.path.isfile(os.path.join(runtime, "main.py")):
+        raise RuntimeError("PoseGuard runtime is not installed")
+    directory = os.path.dirname(SETTINGS)
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    cloud_config = settings.get("cloud_config")
+    default_binding = os.path.join(directory, "binding.json")
+    if not cloud_config and os.path.isfile(default_binding):
+        cloud_config = default_binding
     log_path=os.path.join(directory,'runtime.log')
     if os.path.exists(log_path)and os.path.getsize(log_path)>2*1024*1024:
         os.replace(log_path,log_path+'.previous')
@@ -23,16 +32,17 @@ def main():
         with open(path+'.new','w',encoding='utf-8')as stream:
             json.dump(dict(state=value,pid=os.getpid(),recorded_unix=time.time(),**extra),stream)
         os.replace(path+'.new',path)
-    state('starting',benchmark=bool(settings.get('benchmark',False)))
+    state("starting", runtime_directory=runtime, benchmark=bool(settings.get("benchmark", False)))
     sys.path.insert(0,runtime)
     try:
         spec=importlib.util.spec_from_file_location('poseguard_maix_runtime',os.path.join(runtime,'main.py'))
         module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
         result=module.run(no_display=bool(settings.get('no_display',False)),
             benchmark=bool(settings.get('benchmark',False)),
-            cloud_config=settings.get('cloud_config'),
+            cloud_config=cloud_config,
             data_directory=settings.get('data_directory','/root/poseguard-data/maix'),
-            on_ready=lambda details:state('running',benchmark=bool(settings.get('benchmark',False)),**details))
+            on_ready=lambda details: state("running", runtime_directory=runtime,
+                benchmark=bool(settings.get("benchmark", False)), **details))
         state('stopped');return result
     except BaseException as error:
         traceback.print_exc();state('failed',error=type(error).__name__);raise

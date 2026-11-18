@@ -89,6 +89,9 @@ def main():
     backup = Path(tempfile.mkdtemp(prefix="launcher-", dir=DATA))
     changes = {app / "main.py": (bundle / "launcher/main.py").read_bytes(),
                app / "app.yaml": (bundle / "launcher/app.yaml").read_bytes()}
+    icon = bundle / "launcher/icon.png"
+    if icon.is_file():
+        changes[app / "icon.png"] = icon.read_bytes()
     settings = {**previous, "runtime_directory": str(release),
                 "data_directory": previous.get("data_directory", str(DATA))}
     if config_path.exists():
