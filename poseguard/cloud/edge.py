@@ -218,7 +218,7 @@ class IncidentMonitor:
 
 
 class CloudRelay:
-    def __init__(self, config_path, *, health=None, transport=None):
+    def __init__(self, config_path, *, health=None, transport=None, network_revision=None):
         self.config_path = Path(config_path)
         self.config = json.loads(self.config_path.read_text(encoding="utf-8"))
         self.config["server_url"] = valid_server(self.config["server_url"])
@@ -232,6 +232,7 @@ class CloudRelay:
             pass
         self.health = health or (lambda: {})
         self.transport = transport
+        self.network_revision = network_revision
         self.stop_event = threading.Event()
         self.last_error = ""
         self.thread = None
@@ -285,8 +286,15 @@ class CloudRelay:
         heartbeat_due = 0.0
         retry_at = 0.0
         failures = 0
+        revision = self.network_revision() if self.network_revision else None
         while not self.stop_event.is_set():
             timestamp = time.monotonic()
+            if self.network_revision:
+                current = self.network_revision()
+                if current != revision:
+                    revision = current
+                    heartbeat_due = retry_at = 0.0
+                    failures = 0
             if timestamp < retry_at:
                 self.stop_event.wait(min(1, retry_at-timestamp))
                 continue

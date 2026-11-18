@@ -8,6 +8,22 @@ import pytest
 from platforms.maixcam.cloud_network import MaixNetwork
 
 
+def test_route_change_clears_local_dns_and_failed_peer_caches(monkeypatch):
+    network = MaixNetwork()
+    routes = iter([("192.168.31.114", None), ("192.168.137.108", None)])
+    monkeypatch.setattr(network, "_route_state", lambda: next(routes))
+    assert network.network_revision() == 0
+    key = ("alerts.example.test", 443)
+    network.cache[key] = (10, ["192.0.2.5"])
+    network.good[key] = "192.0.2.5"
+    network.bad[(key, "192.0.2.6")] = 10
+    network.hints[key] = (10, ["8.8.8.8"])
+    network._network_checked_at = 0
+    assert network.network_revision() == 1
+    assert not network.cache and not network.good and not network.bad
+    assert key in network.hints
+
+
 def test_failed_dns_route_retries_without_changing_tls_hostname_and_caches_good_route():
     calls=[]
     class Connection:

@@ -27,8 +27,40 @@ class MaixNetwork:
         self.good={}
         self.bad={}
         self.hints={}
+        self._network_state = None
+        self._network_checked_at = 0.0
+        self._network_revision = 0
+
+    @staticmethod
+    def _route_state():
+        # A UDP connect selects a local route without sending a packet.
+        addresses = []
+        for family, destination in ((socket.AF_INET, ("192.0.2.1", 9)),
+                                    (socket.AF_INET6, ("2001:db8::1", 9))):
+            try:
+                with socket.socket(family, socket.SOCK_DGRAM) as route:
+                    route.connect(destination)
+                    addresses.append(route.getsockname()[0])
+            except OSError:
+                addresses.append(None)
+        return tuple(addresses)
+
+    def network_revision(self):
+        now = time.monotonic()
+        with self.lock:
+            if now >= self._network_checked_at:
+                state = self._route_state()
+                self._network_checked_at = now + 1
+                if self._network_state is not None and state != self._network_state:
+                    self.cache.clear()
+                    self.good.clear()
+                    self.bad.clear()
+                    self._network_revision += 1
+                self._network_state = state
+            return self._network_revision
 
     def routes(self,host,port):
+        revision = self.network_revision()
         now=time.monotonic();key=(host,port)
         with self.lock:
             cached=self.cache.get(key)
@@ -43,7 +75,9 @@ class MaixNetwork:
                 addresses=[]
             addresses.sort(key=lambda value:':'in value)
             if addresses:
-                with self.lock:self.cache[key]=(now+300,addresses)
+                with self.lock:
+                    if self._network_revision == revision:
+                        self.cache[key]=(now+300,addresses)
         else:addresses=list(cached[1])
         with self.lock:
             addresses=list(dict.fromkeys((*validated_hint,*addresses)))

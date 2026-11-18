@@ -1,7 +1,7 @@
 id: poseguard
 name: PoseGuard
 name[zh]: 反诈检测
-version: 1.7.1
+version: 1.7.2
 author: nanaoniiiii
 icon: icon.png
 desc: Local pose detection and cloud device management.

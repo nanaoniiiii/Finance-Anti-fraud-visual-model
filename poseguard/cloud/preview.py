@@ -14,9 +14,10 @@ except ImportError:
 
 
 class PreviewPublisher:
-    def __init__(self, config, encode, copy_frame,connect=None):
+    def __init__(self, config, encode, copy_frame, connect=None, *, network_revision=None):
         self.config, self.encode, self.copy_frame = config, encode, copy_frame
         self.connect=connect
+        self.network_revision = network_revision
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
         self.thread = None
@@ -119,6 +120,7 @@ class PreviewPublisher:
         retry = 1
         while not self.stop_event.is_set():
             ws = None
+            revision = self.network_revision() if self.network_revision else None
             try:
                 server = self.config['server_url'].rstrip('/')
                 address = server.replace('https://','wss://',1).replace('http://','ws://',1)
@@ -139,6 +141,8 @@ class PreviewPublisher:
                 window = 1
                 uses_credit = False
                 while not self.stop_event.is_set():
+                    if self.network_revision and self.network_revision() != revision:
+                        break
                     try:
                         message = ws.recv()
                         if not message:
@@ -208,5 +212,9 @@ class PreviewPublisher:
                 if ws:
                     try: ws.close(timeout=.1)
                     except Exception: pass
-            self.stop_event.wait(retry)
+            until = time.monotonic() + retry
+            while not self.stop_event.is_set() and time.monotonic() < until:
+                if self.network_revision and self.network_revision() != revision:
+                    break
+                self.stop_event.wait(min(.5, max(0, until - time.monotonic())))
             retry = min(30,retry*2)

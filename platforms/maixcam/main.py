@@ -176,10 +176,12 @@ def run(*, max_frames=0, no_display=False, test_timers=False, cloud_config=None,
             factor=min(1.0,profile['long_side']/max(width,height))
             resized=frame.resize(max(16,int(width*factor)),max(16,int(height*factor))) if factor<1 else frame
             return bytes(resized.to_jpeg(quality=max(51,profile['quality'])).to_bytes()),resized.width(),resized.height(),width,height
-        cloud_relay = CloudRelay(cloud_config, health=lambda: dict(cloud_health), transport=network.http_json)
+        cloud_relay = CloudRelay(cloud_config, health=lambda: dict(cloud_health), transport=network.http_json,
+                                 network_revision=network.network_revision)
         preview_config={**cloud_relay.config,'is_test':benchmark or cloud_relay.config.get('is_test',False),
                         'low_resource_preview':True,'keypoint_confidence_kind':'thresholded'}
-        preview = PreviewPublisher(preview_config,encode_preview,lambda f:f.copy(),connect=network.open_preview)
+        preview = PreviewPublisher(preview_config,encode_preview,lambda f:f.copy(),connect=network.open_preview,
+                                   network_revision=network.network_revision)
         preview.failure_hook = network.preview_failed
         cloud_health['capabilities']=dict(preview=True,pose_overlay=True,camera_orientation=True)
     if not benchmark:

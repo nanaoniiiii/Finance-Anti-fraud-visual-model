@@ -4,10 +4,10 @@
 
 ## 从 Maix 桌面打开
 
-把原生安装包 `poseguard_v1.7.1.zip` 上传到 Maix 的 `/tmp`，在板上运行以下命令。安装后在应用列表点 **反诈检测**（英文界面显示 **PoseGuard**）。设备功能键可退出到应用列表。需要开机运行时，在 Maix 的开机启动设置中选择 PoseGuard。 [Sipeed 应用安装说明](https://wiki.sipeed.com/maixpy/doc/zh/basic/app.html)
+把原生安装包 `poseguard_v1.7.2.zip` 上传到 Maix 的 `/tmp`，在板上运行以下命令。安装后在应用列表点 **反诈检测**（英文界面显示 **PoseGuard**）。设备功能键可退出到应用列表。需要开机运行时，在 Maix 的开机启动设置中选择 PoseGuard。 [Sipeed 应用安装说明](https://wiki.sipeed.com/maixpy/doc/zh/basic/app.html)
 
 ```sh
-app_store_cli install /tmp/poseguard_v1.7.1.zip
+app_store_cli install /tmp/poseguard_v1.7.2.zip
 ```
 
 已有绑定保存在 `/root/poseguard-data/maix`，升级包会继续读取该绑定。首次部署的设备可在云端 **设备与绑定** 生成 MaixCAM 绑定码后，用以下命令绑定。新设备需先准备上述板载模型及 Python 的 `websocket-client`。
